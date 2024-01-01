@@ -955,7 +955,7 @@ local function renderHistoryUI()
     ---@diagnostic disable-next-line: undefined-field
     if ImPlot.BeginPlot("Price of " .. historicalItem) then
         ImPlot.SetupAxes("Date", "Price")
-        ImPlot.SetupAxesLimits(0, cachedPriceHistory.max_x, 0, cachedPriceHistory.max_y * 2)
+        ImPlot.SetupAxesLimits(0, cachedPriceHistory.max_x, 0, cachedPriceHistory.max_y * 2, ImPlotCond.Always)
         ImPlot.SetupAxisTicks(ImAxis.X1, cachedPriceHistory.xs, daysLabels)
         ImPlot.PlotLine('', cachedPriceHistory.xs, cachedPriceHistory.ys, #cachedPriceHistory.xs)
         ImPlot.EndPlot()
