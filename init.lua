@@ -927,8 +927,17 @@ local function createCachedGraphData()
         table.insert(salesByDate[dayString], itemData["Price"] or 0)
     end
 
-    for _, v in ipairs(daysLabels) do
-        table.insert(cachedPriceHistory, math.average(salesByDate[v]))
+    cachedPriceHistory.max_x = 0
+    cachedPriceHistory.max_y = 0
+    cachedPriceHistory.xs = {}
+    cachedPriceHistory.ys = {}
+
+    for idx, v in ipairs(daysLabels) do
+        local avg = math.average(salesByDate[v])
+        if avg > cachedPriceHistory.max_y then cachedPriceHistory.max_y = avg end
+        if idx - 1 > cachedPriceHistory.max_x then cachedPriceHistory.max_x = idx - 1 end
+        table.insert(cachedPriceHistory.ys, avg)
+        table.insert(cachedPriceHistory.xs, idx - 1)
         printf("\agHistorical price on \am%s \agwas \at%0.2f", v, math.average(salesByDate[v]))
     end
 end
@@ -939,19 +948,16 @@ local function renderHistoryUI()
     ImGui.Text("Sales History for Item %s", historicalItem)
     ImGui.PopStyleColor(1)
 
-    if #cachedPriceHistory == 0 and #historicalSales > 0 then
+    if not cachedPriceHistory.xs and #historicalSales > 0 then
         createCachedGraphData()
     end
 
-    local width = ImGui.GetWindowWidth() * .97
-    local height = ImGui.GetWindowHeight() * .1
-
-    local testArr = { 100, 200, 300, 400, 500, 600 }
     ---@diagnostic disable-next-line: undefined-field
-    if ImPlot.BeginPlot("Price") then
-        ImPlot.SetupAxes("a", "b")
-        --ImPlot.SetupAxesLimits(0, 100, 0, 100)
-        --ImPlot.PlotLine('', testArr, 1000, 0)
+    if ImPlot.BeginPlot("Price of " .. historicalItem) then
+        ImPlot.SetupAxes("Date", "Price")
+        ImPlot.SetupAxesLimits(0, cachedPriceHistory.max_x, 0, cachedPriceHistory.max_y * 2)
+        ImPlot.SetupAxisTicks(ImAxis.X1, cachedPriceHistory.xs, daysLabels)
+        ImPlot.PlotLine('', cachedPriceHistory.xs, cachedPriceHistory.ys, #cachedPriceHistory.xs)
         ImPlot.EndPlot()
     end
     --ImGui.PlotLines('', cachedPriceHistory, #cachedPriceHistory, 0, "", 0, 2000, ImVec2(width, height))
