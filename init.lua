@@ -96,6 +96,13 @@ local function getDayString(epoch)
     return string.format("%s", os.date('%Y-%m-%d', epoch))
 end
 
+local function clearCachedHistory()
+    cachedPriceHistory.max_x = 0
+    cachedPriceHistory.max_y = 0
+    cachedPriceHistory.xs = {}
+    cachedPriceHistory.ys = {}
+end
+
 local function cacheItems()
     local itemCount = 0
     local line = ""
@@ -811,7 +818,7 @@ local function renderTraderUI()
             if ImGui.Selectable(currentItem, false, 0) then
                 print("Loading history...")
                 itemDB:loadHistoricalData(currentItem, itemData["DBID"])
-                cachedPriceHistory = {}
+                clearCachedHistory()
                 openHistoryGUI = true
             end
             ImGui.TableNextColumn()
@@ -927,10 +934,7 @@ local function createCachedGraphData()
         table.insert(salesByDate[dayString], itemData["Price"] or 0)
     end
 
-    cachedPriceHistory.max_x = 0
-    cachedPriceHistory.max_y = 0
-    cachedPriceHistory.xs = {}
-    cachedPriceHistory.ys = {}
+    clearCachedHistory()
 
     for idx, v in ipairs(daysLabels) do
         local avg = math.average(salesByDate[v])
