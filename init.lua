@@ -1,18 +1,16 @@
-local mq = require('mq')
-local LIP = require('lib/LIP')
-local BFOUtils = require('lib/bfoutils')
-local ICONS = require('mq.Icons')
+local mq       = require('mq')
+local ICONS    = require('mq.Icons')
 local BazaarDB = require('bazaar_db')
-local ImGui = require('ImGui')
-local ImPlot = require('ImPlot')
-require('lib/ed/utils')
+local ImGui    = require('ImGui')
+local ImPlot   = require('ImPlot')
+require('baz_utils')
 
-local animItems = mq.FindTextureAnimation("A_DragItem")
-local animBox = mq.FindTextureAnimation("A_RecessedBox")
+local animItems      = mq.FindTextureAnimation("A_DragItem")
+local animBox        = mq.FindTextureAnimation("A_RecessedBox")
 
 -- Constants
-local ICON_WIDTH = 40
-local ICON_HEIGHT = 40
+local ICON_WIDTH     = 40
+local ICON_HEIGHT    = 40
 local COUNT_X_OFFSET = 39
 local COUNT_Y_OFFSET = 23
 local EQ_ICON_OFFSET = 500
@@ -39,6 +37,34 @@ local function display_item_on_cursor()
     end
 end
 
+function Tooltip(desc)
+    ImGui.SameLine()
+    if ImGui.IsItemHovered() then
+        ImGui.BeginTooltip()
+        ImGui.PushTextWrapPos(ImGui.GetFontSize() * 25.0)
+        ImGui.Text(desc)
+        ImGui.PopTextWrapPos()
+        ImGui.EndTooltip()
+    end
+end
+
+function Tokenize(inputStr, sep)
+    if sep == nil then
+        sep = "|"
+    end
+
+    local t = {}
+    if string.find(tostring(inputStr), "^#") == nil then
+        for str in string.gmatch(tostring(inputStr), "([^" .. sep .. "]+)") do
+            if string.find(str, "^#") == nil then
+                table.insert(t, str)
+            end
+        end
+    end
+
+    return t
+end
+
 -- Search for Items
 local function searchFound(num, itemName)
     printf("Found %d of %s!", num, itemName)
@@ -47,6 +73,7 @@ end
 mq.event("searchFound", "There are #1# Buy Lines that match the search string '#2#'.", searchFound)
 
 CharConfig = mq.TLO.Me.CleanName()
+ServerName = mq.TLO.EverQuest.Server():gsub(" ", "")
 
 local openGUI = true
 local shouldDrawGUI = true
@@ -68,10 +95,7 @@ local totalItems = 0
 
 local settings = {}
 
-local auctionsettings = {}
-
-local bazaar_pickle_path = mq.configDir .. '/bazaar/' .. 'bazaar.lua'
-local auction_pickle_path = mq.configDir .. '/bazaar/' .. 'auction.lua'
+local config_pickle_path = mq.configDir .. '/bazaar/' .. ServerName .. '_ ' .. CharConfig .. '.lua '
 
 local newAuctionPopup = "new_auction_popup"
 local lastAuction = 0
@@ -88,19 +112,17 @@ local openPopup = false
 -- first scan should be about 2 seconds after startup.
 local lastFullScan = os.time() - ((60 * 30) - 2)
 
-local function getDateString(epoch)
-    return string.format("%s", os.date('%Y-%m-%d %H:%M:%S', epoch))
-end
 
-local function getDayString(epoch)
-    return string.format("%s", os.date('%Y-%m-%d', epoch))
-end
 
 local function clearCachedHistory()
     cachedPriceHistory.max_x = 0
+    cachedPriceHistory.min_x = os.time()
     cachedPriceHistory.max_y = 0
+    cachedPriceHistory.labels = {}
     cachedPriceHistory.xs = {}
     cachedPriceHistory.ys = {}
+    cachedPriceHistory.avg_xs = {}
+    cachedPriceHistory.avg_ys = {}
 end
 
 local function cacheItems()
@@ -108,21 +130,18 @@ local function cacheItems()
     local line = ""
     local lineCount = 1
 
-    if (auctionsettings and #AuctionText == 0) then
-        if auctionsettings[CharConfig] then
-            for k, v in pairs(auctionsettings[CharConfig]) do
-                ---@diagnostic disable-next-line: undefined-field
-                if line:len() > 0 then line = line .. " | " end
-                ---@diagnostic disable-next-line: undefined-field
-                line = line .. mq.TLO.LinkDB("=" .. k)() .. " " .. v
-                itemCount = itemCount + 1
-                if itemCount == 4 then
-                    print(string.format("Cached[%d]: %s", lineCount, line))
-                    AuctionText[lineCount] = line
-                    lineCount = lineCount + 1
-                    line = ""
-                    itemCount = 0
-                end
+    if (settings and #AuctionText == 0) then
+        for _, v in ipairs(settings.AuctionItems) do
+            if line:len() > 0 then line = line .. " | " end
+            ---@diagnostic disable-next-line: undefined-field
+            line = line .. mq.TLO.LinkDB("=" .. v.item)() .. " " .. v.cost
+            itemCount = itemCount + 1
+            if itemCount == 4 then
+                print(string.format("Cached[%d]: %s", lineCount, line))
+                AuctionText[lineCount] = line
+                lineCount = lineCount + 1
+                line = ""
+                itemCount = 0
             end
         end
     end
@@ -133,13 +152,8 @@ local function cacheItems()
     end
 end
 
-local function SaveSettings()
-    mq.pickle(bazaar_pickle_path, settings)
-end
-
-local function SaveAuctionSettings(clearItems)
-    --print("Saving Auction Settings...")
-    mq.pickle(auction_pickle_path, auctionsettings)
+local function SaveSettings(clearItems)
+    mq.pickle(config_pickle_path, settings)
 
     if clearItems then
         AuctionText = {}
@@ -147,90 +161,39 @@ local function SaveAuctionSettings(clearItems)
     end
 end
 
-function LoadAuctionSettings()
-    auctionsettings = {}
-    if not file_exists(auction_pickle_path) then
-        ---@diagnostic disable-next-line: undefined-field
-        local config_dir = mq.TLO.MacroQuest.Path():gsub('\\', '/')
-        local auction_settings_file = '/lua/bazaar/config/auction.ini'
-        local auction_settings_path = config_dir .. auction_settings_file
-        if file_exists(auction_settings_path) then
-            auctionsettings = LIP.load(auction_settings_path)
-        end
-
-        if not auctionsettings["Default"] then
-            auctionsettings["Default"] = {}
-            auctionsettings["Default"].Timer = 5
-            auctionsettings["Default"].ChannelNumber = "auc"
-            auctionsettings[CharConfig] = {}
-            auctionsettings[CharConfig .. "_disabled"] = {}
-        end
-
-        SaveAuctionSettings(false)
-    end
-
-    local config, _ = loadfile(auction_pickle_path)
-    if config then auctionsettings = config() end
-
-    if not auctionsettings["Default"] then
-        auctionsettings["Default"] = {}
-        auctionsettings["Default"].Timer = 5
-        auctionsettings["Default"].ChannelNumber = "auc"
-        SaveAuctionSettings(false)
-    end
-    if not auctionsettings[CharConfig] then
-        auctionsettings[CharConfig] = {}
-        auctionsettings[CharConfig .. "_disabled"] = {}
-        SaveAuctionSettings(false)
-    end
-
-    cacheItems()
-end
+local DefaultConfig = {
+    ['Timer']                = { Default = 5, Tooltip = "Time in minutes between manual auctions", },
+    ['Channels']             = { Default = "auc", Tooltip = "| Seperated list of channels to auction to. ex: auc|6|7", },
+    ['UnderCutPercent']      = { Default = 1, Tooltip = "Default undercut amount", },
+    ['DefaultPrice']         = { Default = 2000000, Tooltip = "Default price", },
+    ['DontUndercut']         = { Default = CharConfig .. "|", Tooltip = "| Seperated list of traders not to undercut. ex: Bob|Derple", },
+    ['AuctionItems']         = { Default = {}, },
+    ['DisabledAuctionItems'] = { Default = {}, },
+}
 
 local function LoadSettings()
     CharConfig = mq.TLO.Me.CleanName()
+    local needSave = false
 
-    if not file_exists(bazaar_pickle_path) then
-        ---@diagnostic disable-next-line: undefined-field
-        local config_dir = mq.TLO.MacroQuest.Path():gsub('\\', '/')
-        local settings_file = '/lua/bazaar/config/bazaar.ini'
-        local settings_path = config_dir .. settings_file
-        if file_exists(settings_path) then
-            settings = LIP.load(settings_path)
-        else
-            print("\ayCan't find bazaar.ini at: " .. settings_path)
-            settings = {}
-        end
-
-        -- if this character doesn't have the sections in the ini, create them
-        if not settings[CharConfig] then
-            settings[CharConfig] = {}
-            settings[CharConfig].UnderCutPercent = 5
-            settings[CharConfig].DefaultPrice = 2000000
-            settings[CharConfig].DontUndercut = CharConfig
-        end
-
-        SaveSettings()
+    local config, err = loadfile(config_pickle_path)
+    if not config or err then
+        printf("Failed to Load Config: %s", config_pickle_path)
+        needSave = true
+        settings = {}
+    else
+        settings = config()
     end
 
-    local config, _ = loadfile(bazaar_pickle_path)
-    if config then settings = config() end
-
-    if not settings[CharConfig] then
-        printf("\agCreating new config for \am%s", CharConfig)
-        settings[CharConfig] = {}
-        settings[CharConfig].UnderCutPercent = 5
-        settings[CharConfig].DefaultPrice = 2000000
-        settings[CharConfig].DontUndercut = CharConfig
-        SaveSettings()
+    for k, v in pairs(DefaultConfig) do
+        if settings[k] == nil then settings[k] = v.Default end
     end
+
+    if needSave then SaveSettings(true) end
 
     -- open the items db
     local items_db_file = 'items.db'
     itemDB = BazaarDB.new(mq.configDir .. '/bazaar/' .. items_db_file)
     itemDB:setupDB()
-
-    LoadAuctionSettings()
 
     return true
 end
@@ -267,7 +230,7 @@ local function traderWindowControl(status)
 end
 
 local function shouldUndercut(trader)
-    local tokens = BFOUtils.Tokenize(settings[CharConfig].DontUndercut, "|")
+    local tokens = Tokenize(settings.DontUndercut, "|")
 
     for _, t in ipairs(tokens) do
         if t == trader then return false end
@@ -365,7 +328,7 @@ local function refreshLocalItems()
         refreshItemInSlot(slot)
     end
 
-    totalItems = getTableSize(itemList)
+    totalItems = GetTableSize(itemList)
 end
 
 local function asyncSetTraderPrice()
@@ -381,7 +344,7 @@ local function asyncSetTraderPrice()
             setItem = nil
             asyncSetTraderPriceState = 0
 
-            totalItems = getTableSize(itemList)
+            totalItems = GetTableSize(itemList)
             return
         end
         mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", itemList[setItem]["slot"])).LeftMouseUp()
@@ -440,11 +403,11 @@ end
 
 local function calcTargetPrice(best, curr, trader)
     if curr == 0 and (best or 0) == 0 then
-        return settings[CharConfig].DefaultPrice
+        return settings.DefaultPrice
     end
     if curr == 0 or curr >= (best or 0) then
         if shouldUndercut(trader) then
-            return math.ceil((best or 0) - (settings[CharConfig].UnderCutPercent / 100 * (best or 0)))
+            return math.ceil((best or 0) - (settings.UnderCutPercent / 100 * (best or 0)))
         else
             return best
         end
@@ -733,25 +696,25 @@ local function renderTraderUI()
     ImGui.Separator()
     ImGui.Text("Trader Settings")
     local used
-    settings[CharConfig].UnderCutPercent, used = ImGui.SliderInt("Undercut by Percent",
-        settings[CharConfig].UnderCutPercent, 0, 90)
+    settings.UnderCutPercent, used = ImGui.SliderInt("Undercut by Percent",
+        settings.UnderCutPercent, 0, 90)
     if used then
         recalcTargetPrices()
         SaveSettings()
     end
 
-    local newText, _ = ImGui.InputText("Default Price", tostring(settings[CharConfig].DefaultPrice),
+    local newText, _ = ImGui.InputText("Default Price", tostring(settings.DefaultPrice),
         ImGuiInputTextFlags.CharsDecimal)
     ---@diagnostic disable-next-line: undefined-field
-    if newText:len() > 0 and newText ~= tostring(settings[CharConfig].DefaultPrice) then
-        settings[CharConfig].DefaultPrice = math.ceil(tonumber(newText) or 0)
+    if newText:len() > 0 and newText ~= tostring(settings.DefaultPrice) then
+        settings.DefaultPrice = math.ceil(tonumber(newText) or 0)
         SaveSettings()
     end
 
-    newText, _ = ImGui.InputText("Don't Undercut", settings[CharConfig].DontUndercut, ImGuiInputTextFlags.None)
+    newText, _ = ImGui.InputText("Don't Undercut", settings.DontUndercut, ImGuiInputTextFlags.None)
     ---@diagnostic disable-next-line: undefined-field
-    if newText:len() > 0 and newText ~= settings[CharConfig].DontUndercut then
-        settings[CharConfig].DontUndercut = newText
+    if newText:len() > 0 and newText ~= settings.DontUndercut then
+        settings.DontUndercut = newText
         SaveSettings()
     end
 
@@ -857,7 +820,7 @@ local function renderTraderUI()
             ImGui.Text(itemData["Trader"] or "Unknown")
             ImGui.PopStyleColor()
             ImGui.TableNextColumn()
-            ImGui.Text(getDateString(itemData["ListedDate"] or 0))
+            ImGui.Text(GetDateString(itemData["ListedDate"] or 0))
             ImGui.SameLine()
             ImGui.PushID(currentItem .. "_set_list_btn")
             if ImGui.SmallButton(string.format('%s', ICONS.MD_UPDATE)) then
@@ -869,7 +832,7 @@ local function renderTraderUI()
             ImGui.TableNextColumn()
             ImGui.PushStyleColor(ImGuiCol.Text, 100, 100, 255, 1)
             ImGui.PushID(currentItem .. "_text")
-            local targetText = tostring(itemData["TargetPrice"] or settings[CharConfig].DefaultPrice)
+            local targetText = tostring(itemData["TargetPrice"] or settings.DefaultPrice)
             local newText, _ = ImGui.InputText("##targetinputtext##edit", targetText, ImGuiInputTextFlags.CharsDecimal)
             ---@diagnostic disable-next-line: undefined-field
             if newText:len() > 0 and newText ~= tostring(itemData["TargetPrice"]) then
@@ -915,34 +878,32 @@ function math.average(t)
     return sum / #t
 end
 
-local daysLabels = {}
-
 local function createCachedGraphData()
-    local _, historicalSales = itemDB:getHistoricalData()
-
-    local salesByDate = {}
-    daysLabels = {}
-
-    --table.sort(salesByDate, function(k1, k2) return genericSort(tonumber(k1["Price"]), tonumber(k2["Price"]), 1) end)
-    --table.sort(salesByDate, function(k1, k2) return genericSort((k1["Trader"]), (k2["Trader"]), 1) end)
-    table.sort(historicalSales, function(k1, k2) return genericSort(tonumber(k1["Date"]), tonumber(k2["Date"]), 1) end)
-
-    for _, itemData in ipairs(historicalSales) do
-        local dayString = getDayString(itemData["Date"])
-        if not TableContains(daysLabels, dayString) then table.insert(daysLabels, dayString) end
-        salesByDate[dayString] = salesByDate[dayString] or {}
-        table.insert(salesByDate[dayString], itemData["Price"] or 0)
-    end
+    local itemName, historicalSales = itemDB:getHistoricalData()
 
     clearCachedHistory()
+    for _, itemData in ipairs(historicalSales) do
+        local dayString = GetDayString(itemData.Date)
+        printf("\am%s\ay on \at%s\ay => \ag%s", itemName, dayString, itemData.Price)
+        if itemData.Price > cachedPriceHistory.max_y then cachedPriceHistory.max_y = itemData.Price end
+        if itemData.Date > cachedPriceHistory.max_x then cachedPriceHistory.max_x = itemData.Date end
+        if itemData.Date < cachedPriceHistory.min_x then cachedPriceHistory.min_x = itemData.Date end
+        table.insert(cachedPriceHistory.ys, itemData.Price or 0)
+        table.insert(cachedPriceHistory.xs, itemData.Date or 0)
+        cachedPriceHistory.labels[os.time(GetDayTable(itemData.Date))] = cachedPriceHistory.labels[os.time(GetDayTable(itemData.Date))] or {}
+        table.insert(cachedPriceHistory.labels[os.time(GetDayTable(itemData.Date))], itemData.Price)
+    end
 
-    for idx, v in ipairs(daysLabels) do
-        local avg = math.average(salesByDate[v])
-        if avg > cachedPriceHistory.max_y then cachedPriceHistory.max_y = avg end
-        if idx - 1 > cachedPriceHistory.max_x then cachedPriceHistory.max_x = idx - 1 end
-        table.insert(cachedPriceHistory.ys, avg)
-        table.insert(cachedPriceHistory.xs, idx - 1)
-        printf("\agHistorical price on \am%s \agwas \at%0.2f", v, math.average(salesByDate[v]))
+    local dates = {}
+    for date, _ in pairs(cachedPriceHistory.labels) do table.insert(dates, date) end
+    table.sort(dates)
+
+    for _, date in ipairs(dates) do
+        local val = cachedPriceHistory.labels[date]
+        local avg = math.average(val)
+        table.insert(cachedPriceHistory.avg_ys, avg)
+        table.insert(cachedPriceHistory.avg_xs, date)
+        printf("\agHistorical price on \am%s \agwas \at%0.2f", GetDayString(date), avg)
     end
 end
 
@@ -952,16 +913,16 @@ local function renderHistoryUI()
     ImGui.Text("Sales History for Item %s", historicalItem)
     ImGui.PopStyleColor(1)
 
-    if not cachedPriceHistory.xs and #historicalSales > 0 then
+    if #cachedPriceHistory.xs == 0 and #historicalSales > 0 then
         createCachedGraphData()
     end
 
-    ---@diagnostic disable-next-line: undefined-field
     if ImPlot.BeginPlot("Price of " .. historicalItem) then
         ImPlot.SetupAxes("Date", "Price")
-        ImPlot.SetupAxesLimits(0, cachedPriceHistory.max_x, 0, cachedPriceHistory.max_y * 2, ImPlotCond.Always)
-        ImPlot.SetupAxisTicks(ImAxis.X1, cachedPriceHistory.xs, daysLabels)
-        ImPlot.PlotLine('', cachedPriceHistory.xs, cachedPriceHistory.ys, #cachedPriceHistory.xs)
+        ImPlot.SetupAxesLimits(cachedPriceHistory.min_x - 36000, cachedPriceHistory.max_x + 36000, 0, cachedPriceHistory.max_y * 2, ImPlotCond.Always)
+        ImPlot.SetupAxisScale(ImAxis.X1, ImPlotScale.Time)
+        ImPlot.PlotScatter('Prices', cachedPriceHistory.xs, cachedPriceHistory.ys, #cachedPriceHistory.xs)
+        ImPlot.PlotLine('Average', cachedPriceHistory.avg_xs, cachedPriceHistory.avg_ys, #cachedPriceHistory.avg_xs)
         ImPlot.EndPlot()
     end
     --ImGui.PlotLines('', cachedPriceHistory, #cachedPriceHistory, 0, "", 0, 2000, ImVec2(width, height))
@@ -997,7 +958,7 @@ local function renderHistoryUI()
             ImGui.Text(itemData["Trader"] or "Unknown")
             ImGui.PopStyleColor()
             ImGui.TableNextColumn()
-            ImGui.Text(getDateString(itemData["Date"]) or "Unknown")
+            ImGui.Text(GetDateString(itemData["Date"]) or "Unknown")
         end
 
         ImGui.EndTable()
@@ -1017,10 +978,9 @@ local RenderNewAuctionPopup = function()
         if ImGui.Button("Save") then
             ---@diagnostic disable-next-line: undefined-field
             if popupAuctionItem ~= nil and popupAuctionItem:len() > 0 then
-                auctionsettings[CharConfig] = auctionsettings[CharConfig] or {}
-                auctionsettings[CharConfig][popupAuctionItem] = popupAuctionCost
-                SaveAuctionSettings(true)
-                LoadAuctionSettings()
+                settings = settings or {}
+                table.insert(settings.AuctionItems, { item = popupAuctionItem, cost = popupAuctionCost, })
+                SaveSettings(true)
             else
                 print("\arError Saving Auction Item: Item Name cannot be empty.\ax")
             end
@@ -1050,7 +1010,7 @@ local doAuction = function(ignorePause)
         end
     end
 
-    local tokens = BFOUtils.Tokenize(AuctionChannelNumber, "|")
+    local tokens = Tokenize(settings.Channel, "|")
 
     for _, v in ipairs(AuctionText) do
         for _, c in ipairs(tokens) do
@@ -1075,28 +1035,27 @@ local ICON_WIDTH = 50
 local ICON_HEIGHT = 50
 
 local function renderAuctionUI()
-    if not auctionsettings then return end
+    if not settings then return end
     local used
 
     ImGui.Text("Auction Settings")
-    auctionsettings["Default"].Timer, used = ImGui.SliderInt("Auction Timer", auctionsettings["Default"].Timer, 1, 10,
+    settings.Timer, used = ImGui.SliderInt("Auction Timer", settings.Timer, 1, 10,
         "%d")
     if used then
-        SaveAuctionSettings(false)
+        SaveSettings(false)
     end
-    local newText, _ = ImGui.InputText("Auction Channel", auctionsettings["Default"].ChannelNumber,
+    local newText, _ = ImGui.InputText("Auction Channel", settings.Channel,
         ImGuiInputTextFlags.None)
     ---@diagnostic disable-next-line: undefined-field
-    if newText:len() > 0 and newText ~= auctionsettings["Default"].ChannelNumber then
-        AuctionChannelNumber = newText
-        auctionsettings["Default"].ChannelNumber = newText
-        SaveAuctionSettings()
+    if newText:len() > 0 and newText ~= settings.Channel then
+        settings.Channel = newText
+        SaveSettings(false)
     end
     ImGui.Separator()
     pauseAuctioning, _ = ImGui.Checkbox("Pause Auction", pauseAuctioning)
     ImGui.SetWindowFontScale(1.2)
     ImGui.PushStyleColor(ImGuiCol.Text, 255, 255, 0, 1)
-    ImGui.Text("Count Down: %ds", (auctionsettings["Default"].Timer * 60) - (os.clock() - lastAuction))
+    ImGui.Text("Count Down: %ds", (settings.Timer * 60) - (os.clock() - lastAuction))
     ImGui.PopStyleColor()
     if ImGui.Button("Auction Now!") then
         forceAuction = true
@@ -1116,60 +1075,57 @@ local function renderAuctionUI()
     ImGui.TableSetupColumn('', ImGuiTableColumnFlags.None, 50.0)
     ImGui.TableHeadersRow()
     ImGui.PopStyleColor()
-    if (auctionsettings) then
-        for k, v in pairs(auctionsettings[CharConfig] or {}) do
+    if (settings) then
+        for idx, v in ipairs(settings.AuctionItems or {}) do
             ImGui.TableNextColumn()
-            local _, clicked = ImGui.Selectable(k, false)
+            local _, clicked = ImGui.Selectable(v.item, false)
             if clicked then
-                popupAuctionItem = k
-                popupAuctionCost = v
+                popupAuctionItem = v.item
+                popupAuctionCost = v.cost
                 openPopup = true
             end
             ImGui.TableNextColumn()
-            ImGui.Text(v)
+            ImGui.Text(v.item)
             ImGui.TableNextColumn()
-            ImGui.PushID(k .. "_togg_btn")
+            ImGui.PushID(idx .. "_togg_btn")
             if ImGui.SmallButton(ICONS.FA_TOGGLE_ON) then
-                auctionsettings[CharConfig][k] = nil
-                auctionsettings[CharConfig .. "_disabled"] = auctionsettings[CharConfig .. "_disabled"] or {}
-                auctionsettings[CharConfig .. "_disabled"][k] = v
-                SaveAuctionSettings(true)
+                table.insert(settings.DisabledAuctionItems, settings.AuctionItems[idx])
+                settings.AuctionItems[idx] = nil
+                SaveSettings(true)
                 cacheItems()
             end
             ImGui.PopID()
             ImGui.TableNextColumn()
-            ImGui.PushID(k .. "_trash_btn")
+            ImGui.PushID(idx .. "_trash_btn")
             if ImGui.SmallButton(ICONS.FA_TRASH) then
-                auctionsettings[CharConfig][k] = nil
-                SaveAuctionSettings(true)
+                settings.AuctionItems[idx] = nil
+                SaveSettings(true)
             end
             ImGui.PopID()
         end
-        for k, v in pairs(auctionsettings[CharConfig .. "_disabled"] or {}) do
+        for idx, v in ipairs(settings.DisabledAuctionItems or {}) do
             ImGui.TableNextColumn()
-            local _, clicked = ImGui.Selectable(k, false)
+            local _, clicked = ImGui.Selectable(v.item, false)
             if clicked then
-                popupAuctionItem = k
-                popupAuctionCost = v
+                popupAuctionItem = v.item
+                popupAuctionCost = v.cost
                 openPopup = true
             end
             ImGui.TableNextColumn()
-            ImGui.Text(v)
+            ImGui.Text(v.item)
             ImGui.TableNextColumn()
-            ImGui.PushID(k .. "_togg_btn")
+            ImGui.PushID(idx .. "_togg_btn")
             if ImGui.SmallButton(ICONS.FA_TOGGLE_OFF) then
-                auctionsettings[CharConfig] = auctionsettings[CharConfig] or {}
-                auctionsettings[CharConfig][k] = v
-                auctionsettings[CharConfig .. "_disabled"][k] = nil
-                SaveAuctionSettings(true)
-                cacheItems()
+                table.insert(settings.AuctionItems, settings.DisabledAuctionItems[idx])
+                settings.DisabledAuctionItems[idx] = nil
+                SaveSettings(true)
             end
             ImGui.PopID()
             ImGui.TableNextColumn()
-            ImGui.PushID(k .. "_trash_btn")
+            ImGui.PushID(idx .. "_trash_btn")
             if ImGui.SmallButton(ICONS.FA_TRASH) then
-                auctionsettings[CharConfig][k] = nil
-                SaveAuctionSettings(true)
+                settings.DisabledAuctionItems[idx] = nil
+                SaveSettings(true)
             end
             ImGui.PopID()
         end
@@ -1180,7 +1136,7 @@ local function renderAuctionUI()
     ImGui.Text("Drag new Items")
     if ImGui.Button("HERE", ICON_WIDTH, ICON_HEIGHT) then
         addCursorItem()
-        mq.cmd("/autoinv")
+        --mq.cmd("/autoinv")
     end
     ImGui.Separator()
 
@@ -1200,7 +1156,7 @@ local function renderAuctionUI()
 end
 
 local function asyncAuctionUpdate()
-    if (not auctionsettings[CharConfig]) then
+    if (not settings) then
         ---@diagnostic disable-next-line: lowercase-global
         curState = "No configuration for " .. CharConfig .. "..."
         return
@@ -1210,7 +1166,7 @@ local function asyncAuctionUpdate()
         lastAuction = os.clock()
     end
 
-    if not pauseAuctioning and getTableSize(auctionsettings[CharConfig] or {}) == 0 then
+    if not pauseAuctioning and GetTableSize(settings or {}) == 0 then
         pauseAuctioning = true
     end
 
@@ -1218,7 +1174,7 @@ local function asyncAuctionUpdate()
         lastAuction = os.clock()
     end
 
-    if forceAuction or os.clock() - lastAuction >= auctionsettings["Default"].Timer * 60 then
+    if forceAuction or os.clock() - lastAuction >= settings.Timer * 60 then
         print("Auctioning items")
         doAuction(false)
     end
