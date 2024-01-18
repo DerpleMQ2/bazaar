@@ -1068,7 +1068,6 @@ local function renderAuctionUI()
     ImGui.SetWindowFontScale(1)
 
     ImGui.BeginTable("Items", 4, ImGuiTableFlags.Resizable + ImGuiTableFlags.Borders)
-
     ImGui.TableSetupColumn('Item', ImGuiTableColumnFlags.None, 250)
     ImGui.TableSetupColumn('Cost', ImGuiTableColumnFlags.None, 50.0)
     ImGui.TableSetupColumn('Active', ImGuiTableColumnFlags.None, 50.0)
