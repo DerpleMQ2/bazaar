@@ -1,6 +1,6 @@
 local mq         = require('mq')
 local PackageMan = require('mq/PackageMan')
-PackageMan.Require('lsqlite3')
+PackageMan.Install('lsqlite3')
 
 local ICONS    = require('mq.Icons')
 local BazaarDB = require('bazaar_db')
