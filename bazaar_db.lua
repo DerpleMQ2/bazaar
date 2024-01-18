@@ -1,9 +1,8 @@
-local BazaarDB = { _version = '1.0', author = 'Derple' }
+local BazaarDB = { _version = '1.0', author = 'Derple', }
 BazaarDB.__index = BazaarDB
 
 local mq = require('mq')
-local PackageMan = require('mq/PackageMan')
-local sqlite = PackageMan.Require('lsqlite3')
+local sqlite = require('lsqlite3')
 
 local function dump(o)
     if type(o) == 'table' then
@@ -22,7 +21,7 @@ end
 ---@return table
 function BazaarDB.new(t)
     local newBazaarDB = setmetatable(
-        { itemPriceCache = {}, itemListedTimeCache = {}, historicalSales = {}, historicalItem = nil, DB = sqlite.open(t) },
+        { itemPriceCache = {}, itemListedTimeCache = {}, historicalSales = {}, historicalItem = nil, DB = sqlite.open(t), },
         BazaarDB)
     return newBazaarDB
 end
@@ -74,7 +73,7 @@ end
 
 function BazaarDB:insertItem(itemName)
     local insert_item_stmt = assert(self["DB"]:prepare "INSERT INTO items VALUES (NULL, :server, :item);")
-    insert_item_stmt:bind_names { server = mq.TLO.MacroQuest.Server(), item = itemName }
+    insert_item_stmt:bind_names { server = mq.TLO.MacroQuest.Server(), item = itemName, }
     insert_item_stmt:step()
     insert_item_stmt:reset()
     insert_item_stmt:finalize()
@@ -107,7 +106,7 @@ function BazaarDB:insertPrice(values)
 end
 
 function BazaarDB:cacheItemPrice(dbid, seller, price)
-    table.insert(self["itemPriceCache"], { item_id = dbid, seller = seller, price = price, date = os.time() })
+    table.insert(self["itemPriceCache"], { item_id = dbid, seller = seller, price = price, date = os.time(), })
 end
 
 function BazaarDB:writeItemPriceCache()
@@ -165,7 +164,7 @@ function BazaarDB:writeItemListedCache()
 end
 
 function BazaarDB:cacheItemListedTime(dbid, price, date)
-    table.insert(self["itemListedTimeCache"], { item_id = dbid, price = price, listed_date = date })
+    table.insert(self["itemListedTimeCache"], { item_id = dbid, price = price, listed_date = date, })
 end
 
 function BazaarDB:clearHistoricalData()
@@ -182,7 +181,7 @@ function BazaarDB:loadHistoricalData(itemName, dbid)
     self["historicalSales"] = {}
 
     for trader, price, date in query_item_stmt:urows() do
-        table.insert(self["historicalSales"], { Trader = trader, Price = price, Date = date })
+        table.insert(self["historicalSales"], { Trader = trader, Price = price, Date = date, })
     end
 
     return
