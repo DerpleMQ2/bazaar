@@ -137,6 +137,20 @@ function BazaarDB:getItemListedTime(dbid)
     return last_date
 end
 
+function BazaarDB:getAllItems()
+    local query_item_stmt = assert(self["DB"]:prepare "SELECT item_id, item_name FROM items WHERE server_name=? ORDER BY item_name ASC;")
+    query_item_stmt:bind(1, mq.TLO.MacroQuest.Server())
+    local res = {}
+
+    for item_id, item_name in query_item_stmt:urows() do
+        --print(string.format("Found listed time: \ay%s\ax for \at%s", date, itemName))
+        table.insert(res, { Name = item_name, ID = item_id, })
+    end
+
+    --print(string.format("\arItem list not found: %s", itemName))
+    return res
+end
+
 function BazaarDB:insertItemListedTime(values)
     local insert_item_stmt = assert(self["DB"]:prepare "INSERT INTO item_listed VALUES (NULL, :item_id, :price, :listed_date);")
     insert_item_stmt:bind_names(values)

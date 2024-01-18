@@ -1,6 +1,6 @@
 local mq         = require('mq')
 local PackageMan = require('mq/PackageMan')
-PackageMan.Install('lsqlite3')
+PackageMan.Require('lsqlite3')
 
 local ICONS    = require('mq.Icons')
 local BazaarDB = require('bazaar_db')
@@ -96,6 +96,7 @@ local pauseScan = false
 local itemDB
 
 local itemList = {}
+local allKnownItems = {}
 local totalItems = 0
 
 local settings = {}
@@ -199,6 +200,8 @@ local function LoadSettings()
     local items_db_file = 'items.db'
     itemDB = BazaarDB.new(mq.configDir .. '/bazaar/' .. items_db_file)
     itemDB:setupDB()
+
+    allKnownItems = itemDB:getAllItems()
 
     return true
 end
@@ -873,6 +876,38 @@ local function renderTraderUI()
         end
         ImGui.EndTable()
     end
+
+    if ImGui.CollapsingHeader("Previously Sold Items") then
+        ImGui.Indent()
+        if ImGui.BeginTable("OldItemList", 3, ImGuiTableFlags.Borders) then
+            ImGui.PushStyleColor(ImGuiCol.Text, 255, 0, 255, 1)
+            ImGui.TableSetupColumn('Id', (ImGuiTableColumnFlags.WidthFixed), 50.0)
+            ImGui.TableSetupColumn('DBId', (ImGuiTableColumnFlags.WidthFixed), 50.0)
+            ImGui.TableSetupColumn('Item', (ImGuiTableColumnFlags.WidthStretch), 300.0)
+            ImGui.PopStyleColor()
+            ImGui.TableHeadersRow()
+
+            for idx, itemData in ipairs(allKnownItems) do
+                ImGui.TableNextColumn()
+
+                ImGui.Text(tostring(idx))
+
+                ImGui.TableNextColumn()
+
+                ImGui.Text(tostring(itemData.ID))
+
+                ImGui.TableNextColumn()
+                if ImGui.Selectable(itemData.Name, false, 0) then
+                    print("Loading history...")
+                    itemDB:loadHistoricalData(itemData.Name, itemData.ID)
+                    clearCachedHistory()
+                    openHistoryGUI = true
+                end
+            end
+            ImGui.EndTable()
+        end
+        ImGui.Unindent()
+    end
 end
 
 function math.average(t)
@@ -1246,6 +1281,7 @@ while openGUI do
         doItemScan = true
         currentItemIdx = 0
         lastFullScan = os.time()
+        allKnownItems = itemDB:getAllItems()
     end
 
     traderCheckItems()
