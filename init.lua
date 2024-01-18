@@ -1085,7 +1085,7 @@ local function renderAuctionUI()
                 openPopup = true
             end
             ImGui.TableNextColumn()
-            ImGui.Text(v.item)
+            ImGui.Text(v.cost)
             ImGui.TableNextColumn()
             ImGui.PushID(idx .. "_togg_btn")
             if ImGui.SmallButton(ICONS.FA_TOGGLE_ON) then
