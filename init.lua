@@ -1265,6 +1265,10 @@ local BazaarGUI = function()
     end
 end
 
+if not mq.TLO.Plugin("MQ2Bzsrch").IsLoaded() then
+    printf("\arBazaar requires MQ2Bzsrch to be loaded!\n\aw\ayPlease load it using: \aw/plugin mq2bzsrch")
+    mq.exit()
+end
 LoadSettings()
 
 mq.imgui.init('bazaarGUI', BazaarGUI)
