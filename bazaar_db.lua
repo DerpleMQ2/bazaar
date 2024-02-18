@@ -75,7 +75,6 @@ function BazaarDB:insertItem(itemName)
     local insert_item_stmt = assert(self["DB"]:prepare "INSERT INTO items VALUES (NULL, :server, :item);")
     insert_item_stmt:bind_names { server = mq.TLO.MacroQuest.Server(), item = itemName, }
     insert_item_stmt:step()
-    insert_item_stmt:reset()
     insert_item_stmt:finalize()
     return self:queryItemDBId(itemName)
 end
@@ -99,7 +98,6 @@ function BazaarDB:insertPrice(values)
     local insert_item_stmt = assert(self["DB"]:prepare "INSERT INTO item_prices VALUES (NULL, :item_id, :seller, :price, :date);")
     insert_item_stmt:bind_names(values)
     insert_item_stmt:step()
-    insert_item_stmt:reset()
     local result = insert_item_stmt:finalize()
 
     print(string.format("Insert Price %s Result: \ay%d", dump(values), result))
@@ -155,7 +153,6 @@ function BazaarDB:insertItemListedTime(values)
     local insert_item_stmt = assert(self["DB"]:prepare "INSERT INTO item_listed VALUES (NULL, :item_id, :price, :listed_date);")
     insert_item_stmt:bind_names(values)
     insert_item_stmt:step()
-    insert_item_stmt:reset()
     local result = insert_item_stmt:finalize()
 
     print(string.format("Insert Listed Time %s Result: \ay%d", dump(values), result))
