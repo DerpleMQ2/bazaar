@@ -64,10 +64,13 @@ function BazaarDB:queryItemDBId(itemName)
     query_item_stmt:bind(2, itemName)
 
     for row in query_item_stmt:nrows() do
+        query_item_stmt:finalize()
         return tonumber(row.item_id)
     end
 
     print(string.format("\arItem not found: %s on %s", itemName, mq.TLO.MacroQuest.Server()))
+    query_item_stmt:finalize()
+
     return nil
 end
 
@@ -131,6 +134,7 @@ function BazaarDB:getItemListedTime(dbid)
         last_date = date
     end
 
+    query_item_stmt:finalize()
     --print(string.format("\arItem list not found: %s", itemName))
     return last_date
 end
@@ -145,6 +149,7 @@ function BazaarDB:getAllItems()
         table.insert(res, { Name = item_name, ID = item_id, })
     end
 
+    query_item_stmt:finalize()
     --print(string.format("\arItem list not found: %s", itemName))
     return res
 end
@@ -157,7 +162,7 @@ function BazaarDB:insertItemListedTime(values)
 
     print(string.format("Insert Listed Time %s Result: \ay%d", dump(values), result))
 
-    return
+    return true
 end
 
 function BazaarDB:writeItemListedCache()
@@ -195,7 +200,9 @@ function BazaarDB:loadHistoricalData(itemName, dbid)
         table.insert(self["historicalSales"], { Trader = trader, Price = price, Date = date, })
     end
 
-    return
+    query_item_stmt:finalize()
+
+    return true
 end
 
 function BazaarDB:getHistoricalData()
