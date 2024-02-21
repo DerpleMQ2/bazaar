@@ -872,6 +872,7 @@ local function renderTraderUI()
                 DisabledButton(string.format('%s', ICONS.MD_REFRESH)) -- noop
             end
             ImGui.PopID()
+            ImGui.PopStyleColor()
             Tooltip("Refresh Item")
         end
         ImGui.EndTable()
