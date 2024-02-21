@@ -746,12 +746,13 @@ local function renderTraderUI()
         ImGui.ProgressBar((currentItemIdx - 1) / (totalItems or 1))
     end
 
-    if ImGui.BeginTable("ItemList", ColumnID_LAST, ImGuiTableFlags.Resizable + ImGuiTableFlags.Borders + ImGuiTableFlags.Sortable) then
+    if ImGui.BeginTable("ItemList", ColumnID_LAST, bit32.bor(ImGuiTableFlags.Resizable, ImGuiTableFlags.Borders, ImGuiTableFlags.Sortable)) then
         ImGui.PushStyleColor(ImGuiCol.Text, 255, 0, 255, 1)
-        ImGui.TableSetupColumn('Icon', (ImGuiTableColumnFlags.NoSort + ImGuiTableColumnFlags.WidthFixed), 20.0,
+        ImGui.TableSetupColumn('Icon', bit32.bor(ImGuiTableColumnFlags.NoSort, ImGuiTableColumnFlags.WidthFixed), 20.0,
             ColumnID_ItemIcon)
         ImGui.TableSetupColumn('Item',
-            (ImGuiTableColumnFlags.DefaultSort + ImGuiTableColumnFlags.PreferSortDescending + ImGuiTableColumnFlags.WidthFixed),
+            bit32.bor(ImGuiTableColumnFlags.DefaultSort, ImGuiTableColumnFlags.PreferSortDescending,
+                ImGuiTableColumnFlags.WidthFixed),
             300.0, ColumnID_Item)
         ImGui.TableSetupColumn('My Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_MyPrice)
         ImGui.TableSetupColumn('Lowest Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_LowestPrice)
@@ -968,11 +969,11 @@ local function renderHistoryUI()
     end
     --ImGui.PlotLines('', cachedPriceHistory, #cachedPriceHistory, 0, "", 0, 2000, ImVec2(width, height))
 
-    if ImGui.BeginTable("HistoryList", ColumnID_HistoryLAST, ImGuiTableFlags.Resizable + ImGuiTableFlags.Borders + ImGuiTableFlags.Sortable) then
+    if ImGui.BeginTable("HistoryList", ColumnID_HistoryLAST, bit32.bor(ImGuiTableFlags.Resizable, ImGuiTableFlags.Borders, ImGuiTableFlags.Sortable)) then
         ImGui.PushStyleColor(ImGuiCol.Text, 255, 0, 255, 1)
         ImGui.TableSetupColumn('Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_HistoryPrice)
         ImGui.TableSetupColumn('Trader', ImGuiTableColumnFlags.None, 50.0, ColumnID_HistoryTrader)
-        ImGui.TableSetupColumn('Date', ImGuiTableColumnFlags.DefaultSort + ImGuiTableColumnFlags.PreferSortDescending,
+        ImGui.TableSetupColumn('Date', bit32.bor(ImGuiTableColumnFlags.DefaultSort, ImGuiTableColumnFlags.PreferSortDescending),
             50.0, ColumnID_HistoryDate)
         ImGui.PopStyleColor()
         ImGui.TableHeadersRow()
@@ -1108,7 +1109,7 @@ local function renderAuctionUI()
     ImGui.Text("Auction Items")
     ImGui.SetWindowFontScale(1)
 
-    ImGui.BeginTable("Items", 4, ImGuiTableFlags.Resizable + ImGuiTableFlags.Borders)
+    ImGui.BeginTable("Items", 4, bit32.bor(ImGuiTableFlags.Resizable, ImGuiTableFlags.Borders))
     ImGui.TableSetupColumn('Item', ImGuiTableColumnFlags.None, 250)
     ImGui.TableSetupColumn('Cost', ImGuiTableColumnFlags.None, 50.0)
     ImGui.TableSetupColumn('Active', ImGuiTableColumnFlags.None, 50.0)
