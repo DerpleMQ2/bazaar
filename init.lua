@@ -137,7 +137,7 @@ local function cacheItems()
     local lineCount = 1
 
     if (settings and #AuctionText == 0) then
-        for _, v in ipairs(settings.AuctionItems) do
+        for _, v in pairs(settings.AuctionItems) do
             if line:len() > 0 then line = line .. " | " end
             ---@diagnostic disable-next-line: undefined-field
             line = line .. mq.TLO.LinkDB("=" .. v.item)() .. " " .. v.cost
@@ -1117,7 +1117,7 @@ local function renderAuctionUI()
     ImGui.TableHeadersRow()
     ImGui.PopStyleColor()
     if (settings) then
-        for idx, v in ipairs(settings.AuctionItems or {}) do
+        for idx, v in pairs(settings.AuctionItems or {}) do
             ImGui.TableNextColumn()
             local _, clicked = ImGui.Selectable(v.item, false)
             if clicked then
@@ -1144,7 +1144,7 @@ local function renderAuctionUI()
             end
             ImGui.PopID()
         end
-        for idx, v in ipairs(settings.DisabledAuctionItems or {}) do
+        for idx, v in pairs(settings.DisabledAuctionItems or {}) do
             ImGui.TableNextColumn()
             local _, clicked = ImGui.Selectable(v.item, false)
             if clicked then
@@ -1153,7 +1153,7 @@ local function renderAuctionUI()
                 openPopup = true
             end
             ImGui.TableNextColumn()
-            ImGui.Text(v.item)
+            ImGui.Text(v.cost)
             ImGui.TableNextColumn()
             ImGui.PushID(idx .. "_togg_btn")
             if ImGui.SmallButton(ICONS.FA_TOGGLE_OFF) then
