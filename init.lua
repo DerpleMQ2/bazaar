@@ -148,10 +148,11 @@ local DefaultConfig = {
     ['Timer']                = { Default = 5, Tooltip = "Time in minutes between manual auctions", },
     ['Channels']             = { Default = "auc", Tooltip = "| Seperated list of channels to auction to. ex: auc|6|7", },
     ['UnderCutPercent']      = { Default = 1, Tooltip = "Default undercut amount", },
-    ['UnderCutOOM']          = { Default = 2, Tooltip = "Round Undercut to Order of Magnitude X", },
+    ['UnderCutOOM']          = { Default = 0, Tooltip = "Round Undercut to Order of Magnitude X", },
     ['DefaultPrice']         = { Default = 2000000, Tooltip = "Default price", },
     ['DontUndercut']         = { Default = CharConfig .. "|", Tooltip = "| Seperated list of traders not to undercut. ex: Bob|Derple", },
     ['AuctionItems']         = { Default = {}, },
+    ['scanTimer']            = { Default = 30, },
     ['DisabledAuctionItems'] = { Default = {}, },
 }
 
@@ -170,16 +171,6 @@ local function LoadSettings()
 
     for k, v in pairs(DefaultConfig) do
         if settings[k] == nil then settings[k] = v.Default end
-    end
-
-    if not settings.scanTimer then
-        settings.scanTimer = 30
-        needSave = true
-    end
-
-    if not settings.UnderCutOOM then
-        settings.UnderCutOOM = 0
-        needSave = true
     end
 
     lastFullScan = os.time() - ((60 * settings.scanTimer) - 2)
@@ -1103,7 +1094,7 @@ local function renderAuctionUI()
     local used
 
     ImGui.Text("Auction Settings")
-    settings.Timer, used = ImGui.SliderInt("Auction Timer", settings.Timer, 1, 30,
+    settings.scanTimer, used = ImGui.SliderInt("Auction Timer", settings.scanTimer, 1, 30,
         "%d")
     if used then
         SaveSettings(false)
@@ -1119,7 +1110,7 @@ local function renderAuctionUI()
     pauseAuctioning, _ = ImGui.Checkbox("Pause Auction", pauseAuctioning)
     ImGui.SetWindowFontScale(1.2)
     ImGui.PushStyleColor(ImGuiCol.Text, 255, 255, 0, 1)
-    ImGui.Text("Count Down: %ds", (settings.Timer * 60) - (os.clock() - lastAuction))
+    ImGui.Text("Count Down: %ds", (settings.scanTimer * 60) - (os.clock() - lastAuction))
     ImGui.PopStyleColor()
     if ImGui.Button("Auction Now!") then
         forceAuction = true
@@ -1237,7 +1228,7 @@ local function asyncAuctionUpdate()
         lastAuction = os.clock()
     end
 
-    if forceAuction or os.clock() - lastAuction >= settings.Timer * 60 then
+    if forceAuction or os.clock() - lastAuction >= settings.scanTimer * 60 then
         print("Auctioning items")
         doAuction(false)
     end
