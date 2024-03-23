@@ -412,7 +412,7 @@ local function calcTargetPrice(best, curr, trader)
 
             if ordMagDiff > best then return newPrice end
 
-            newPrice = math.ceil(newPrice / ordMagDiff) * ordMagDiff
+            newPrice = math.floor(newPrice / ordMagDiff) * ordMagDiff
 
             return newPrice
         else
@@ -717,7 +717,7 @@ local function renderTraderUI()
         SaveSettings()
     end
 
-    settings.UnderCutOOM, used = ImGui.SliderInt("Undercut to Nears Order of Magnitude", settings.UnderCutOOM, 0, 90)
+    settings.UnderCutOOM, used = ImGui.SliderInt("Undercut Rounding to Nearst", settings.UnderCutOOM, 0, 90)
     if used then
         recalcTargetPrices()
         SaveSettings()
