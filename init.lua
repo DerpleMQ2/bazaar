@@ -7,39 +7,18 @@ local BazaarDB = require('bazaar_db')
 local ImGui    = require('ImGui')
 local ImPlot   = require('ImPlot')
 
-
 require('baz_utils')
 
-local animItems      = mq.FindTextureAnimation("A_DragItem")
-local animBox        = mq.FindTextureAnimation("A_RecessedBox")
+local animItems = mq.FindTextureAnimation("A_DragItem")
 
--- Constants
-local ICON_WIDTH     = 40
-local ICON_HEIGHT    = 40
-local COUNT_X_OFFSET = 39
-local COUNT_Y_OFFSET = 23
-local EQ_ICON_OFFSET = 500
-
-local function display_item_on_cursor()
-    if mq.TLO.Cursor() then
-        local cursor_item = mq.TLO.Cursor -- this will be an MQ item, so don't forget to use () on the members!
-        local mouse_x, mouse_y = ImGui.GetMousePos()
-        local window_x, window_y = ImGui.GetWindowPos()
-        local icon_x = mouse_x - window_x + 10
-        local icon_y = mouse_y - window_y + 10
-        local stack_x = icon_x + COUNT_X_OFFSET
-        local stack_y = icon_y + COUNT_Y_OFFSET
-        local text_size = ImGui.CalcTextSize(tostring(cursor_item.Stack()))
-        ImGui.SetCursorPos(icon_x, icon_y)
-        animItems:SetTextureCell(cursor_item.Icon() - EQ_ICON_OFFSET)
-        ImGui.DrawTextureAnimation(animItems, ICON_WIDTH, ICON_HEIGHT)
-        if cursor_item.Stackable() then
-            ImGui.SetCursorPos(stack_x, stack_y)
-            ImGui.DrawTextureAnimation(animBox, text_size, ImGui.GetTextLineHeight())
-            ImGui.SetCursorPos(stack_x - text_size, stack_y)
-            ImGui.TextUnformatted(tostring(cursor_item.Stack()))
-        end
+function GetTableEntry(t, v)
+    --printf("Serach %s for %s", t, v)
+    if not t then return false, 0 end
+    for idx, tv in pairs(t) do
+        --printf("%s == %s", v, tv.item)
+        if tv.item == v then return true, idx end
     end
+    return false, 0
 end
 
 function Tooltip(desc)
@@ -116,9 +95,7 @@ local cachedPriceHistory = {}
 local openPopup = false
 
 -- first scan should be about 2 seconds after startup.
-local lastFullScan = os.time() - ((60 * 30) - 2)
-
-
+local lastFullScan = 0
 
 local function clearCachedHistory()
     cachedPriceHistory.max_x = 0
@@ -193,6 +170,13 @@ local function LoadSettings()
     for k, v in pairs(DefaultConfig) do
         if settings[k] == nil then settings[k] = v.Default end
     end
+
+    if not settings.scanTimer then
+        settings.scanTimer = 30
+        needSave = true
+    end
+
+    lastFullScan = os.time() - ((60 * settings.scanTimer) - 2)
 
     if needSave then SaveSettings(true) end
 
@@ -664,6 +648,8 @@ end
 local sortedItemKeys = {}
 
 local function renderTraderUI()
+    local pressed
+
     ImGui.PushStyleColor(ImGuiCol.Text, 0.0, 1.0, 0.0, 1)
     ImGui.Text("Bazaar running for %s", CharConfig)
     ImGui.PopStyleColor(1)
@@ -685,6 +671,12 @@ local function renderTraderUI()
     end
     ImGui.PopStyleColor(1)
 
+    settings.scanTimer, pressed = ImGui.InputInt("Scan Time in Minues", settings.scanTimer)
+    if pressed then
+        if settings.scanTimer < 30 then settings.scanTimer = 30 end
+        SaveSettings(false)
+    end
+
     if ImGui.Button("Scan Items", 150, 25) then
         doItemScan = true
         currentItemIdx = 0
@@ -694,7 +686,7 @@ local function renderTraderUI()
     ImGui.SameLine()
 
     ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.6, 0.6, 1.0)
-    ImGui.Text(string.format("Next Scan in %s", FormatTime((60 * 30) - (os.time() - lastFullScan))))
+    ImGui.Text(string.format("Next Scan in %s", FormatTime((60 * settings.scanTimer) - (os.time() - lastFullScan))))
     ImGui.PopStyleColor(1)
 
     ImGui.SameLine()
@@ -784,7 +776,9 @@ local function renderTraderUI()
 
             ImGui.TableNextColumn()
 
-            drawInspectableIcon((tonumber(itemData["IconID"]) or 500) - 500, itemData["ItemRef"])
+            if itemData then
+                drawInspectableIcon((tonumber(itemData["IconID"]) or 500) - 500, itemData["ItemRef"])
+            end
 
             ImGui.TableNextColumn()
             if ImGui.Selectable(currentItem, false, 0) then
@@ -1021,7 +1015,15 @@ local RenderNewAuctionPopup = function()
             ---@diagnostic disable-next-line: undefined-field
             if popupAuctionItem ~= nil and popupAuctionItem:len() > 0 then
                 settings = settings or {}
-                table.insert(settings.AuctionItems, { item = popupAuctionItem, cost = popupAuctionCost, })
+                local exists, idx = GetTableEntry(settings.AuctionItems or {}, popupAuctionItem)
+                local exists_dis, idx_dis = GetTableEntry(settings.DisabledAuctionItems or {}, popupAuctionItem)
+                if exists then
+                    settings.AuctionItems[idx].cost = popupAuctionCost
+                elseif exists_dis then
+                    settings.DisabledAuctionItems[idx_dis].cost = popupAuctionCost
+                else
+                    table.insert(settings.AuctionItems, { item = popupAuctionItem, cost = popupAuctionCost, })
+                end
                 SaveSettings(true)
             else
                 print("\arError Saving Auction Item: Item Name cannot be empty.\ax")
@@ -1249,7 +1251,6 @@ local BazaarGUI = function()
                 ImGui.EndTabBar()
             end
         end
-        display_item_on_cursor()
 
         ---@diagnostic disable-next-line: undefined-field
         ImGui.End()
@@ -1283,7 +1284,7 @@ while openGUI do
         lastFullScan = os.time()
     end
 
-    if os.time() - lastFullScan >= (60 * 30) then
+    if os.time() - lastFullScan >= (60 * settings.scanTimer) then
         doItemScan = true
         currentItemIdx = 0
         lastFullScan = os.time()
