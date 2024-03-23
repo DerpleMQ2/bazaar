@@ -148,6 +148,7 @@ local DefaultConfig = {
     ['Timer']                = { Default = 5, Tooltip = "Time in minutes between manual auctions", },
     ['Channels']             = { Default = "auc", Tooltip = "| Seperated list of channels to auction to. ex: auc|6|7", },
     ['UnderCutPercent']      = { Default = 1, Tooltip = "Default undercut amount", },
+    ['UnderCutOOM']          = { Default = 2, Tooltip = "Round Undercut to Order of Magnitude X", },
     ['DefaultPrice']         = { Default = 2000000, Tooltip = "Default price", },
     ['DontUndercut']         = { Default = CharConfig .. "|", Tooltip = "| Seperated list of traders not to undercut. ex: Bob|Derple", },
     ['AuctionItems']         = { Default = {}, },
@@ -173,6 +174,11 @@ local function LoadSettings()
 
     if not settings.scanTimer then
         settings.scanTimer = 30
+        needSave = true
+    end
+
+    if not settings.UnderCutOOM then
+        settings.UnderCutOOM = 0
         needSave = true
     end
 
@@ -399,7 +405,16 @@ local function calcTargetPrice(best, curr, trader)
     end
     if curr == 0 or curr >= (best or 0) then
         if shouldUndercut(trader) then
-            return math.ceil((best or 0) - (settings.UnderCutPercent / 100 * (best or 0)))
+            local ordMagDiff = 10 ^ settings.UnderCutOOM
+            -- math.floor(math.abs(math.log((best > 0 and best or 1) / (settings.UnderCutOOM > 0 and 10 ^ settings.UnderCutOOM or 10), 10)))
+
+            local newPrice = math.ceil((best or 0) - (settings.UnderCutPercent / 100 * (best or 0)))
+
+            if ordMagDiff > best then return newPrice end
+
+            newPrice = math.ceil(newPrice / ordMagDiff) * ordMagDiff
+
+            return newPrice
         else
             return best
         end
@@ -696,8 +711,13 @@ local function renderTraderUI()
     ImGui.Separator()
     ImGui.Text("Trader Settings")
     local used
-    settings.UnderCutPercent, used = ImGui.SliderInt("Undercut by Percent",
-        settings.UnderCutPercent, 0, 90)
+    settings.UnderCutPercent, used = ImGui.SliderInt("Undercut by Percent", settings.UnderCutPercent, 0, 90)
+    if used then
+        recalcTargetPrices()
+        SaveSettings()
+    end
+
+    settings.UnderCutOOM, used = ImGui.SliderInt("Undercut to Nears Order of Magnitude", settings.UnderCutOOM, 0, 90)
     if used then
         recalcTargetPrices()
         SaveSettings()
@@ -1083,7 +1103,7 @@ local function renderAuctionUI()
     local used
 
     ImGui.Text("Auction Settings")
-    settings.Timer, used = ImGui.SliderInt("Auction Timer", settings.Timer, 1, 10,
+    settings.Timer, used = ImGui.SliderInt("Auction Timer", settings.Timer, 1, 30,
         "%d")
     if used then
         SaveSettings(false)
