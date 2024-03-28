@@ -634,6 +634,8 @@ end
 local ICON_SIZE = 20
 
 local function drawInspectableIcon(iconID, item)
+    if not item then return end
+    if not iconID then iconID = 0 end
     local cursor_x, cursor_y = ImGui.GetCursorPos()
 
     animItems:SetTextureCell(iconID or 0)
@@ -642,8 +644,8 @@ local function drawInspectableIcon(iconID, item)
 
     ImGui.SetCursorPos(cursor_x, cursor_y)
 
-    ImGui.PushID(tostring(iconID) .. item.Name() .. "_invis_btn")
-    ImGui.InvisibleButton(item.Name(), ImVec2(ICON_SIZE, ICON_SIZE),
+    ImGui.PushID((tostring(iconID or 0) or "0") .. (item.Name() or "") .. "_invis_btn")
+    ImGui.InvisibleButton(item.Name() or "NotFound", ImVec2(ICON_SIZE, ICON_SIZE),
         bit32.bor(ImGuiButtonFlags.MouseButtonLeft))
     if ImGui.IsItemHovered() and ImGui.IsMouseReleased(ImGuiMouseButton.Left) then
         item.Inspect()
@@ -937,7 +939,8 @@ local function createCachedGraphData()
         if itemData.Date < cachedPriceHistory.min_x then cachedPriceHistory.min_x = itemData.Date end
         table.insert(cachedPriceHistory.ys, itemData.Price or 0)
         table.insert(cachedPriceHistory.xs, itemData.Date or 0)
-        cachedPriceHistory.labels[os.time(GetDayTable(itemData.Date))] = cachedPriceHistory.labels[os.time(GetDayTable(itemData.Date))] or {}
+        cachedPriceHistory.labels[os.time(GetDayTable(itemData.Date))] = cachedPriceHistory.labels
+            [os.time(GetDayTable(itemData.Date))] or {}
         table.insert(cachedPriceHistory.labels[os.time(GetDayTable(itemData.Date))], itemData.Price)
     end
 
@@ -966,7 +969,8 @@ local function renderHistoryUI()
 
     if ImPlot.BeginPlot("Price of " .. historicalItem) then
         ImPlot.SetupAxes("Date", "Price")
-        ImPlot.SetupAxesLimits(cachedPriceHistory.min_x - 36000, cachedPriceHistory.max_x + 36000, 0, cachedPriceHistory.max_y * 2, ImPlotCond.Always)
+        ImPlot.SetupAxesLimits(cachedPriceHistory.min_x - 36000, cachedPriceHistory.max_x + 36000, 0,
+            cachedPriceHistory.max_y * 2, ImPlotCond.Always)
         ImPlot.SetupAxisScale(ImAxis.X1, ImPlotScale.Time)
         ImPlot.PlotScatter('Prices', cachedPriceHistory.xs, cachedPriceHistory.ys, #cachedPriceHistory.xs)
         ImPlot.PlotLine('Average', cachedPriceHistory.avg_xs, cachedPriceHistory.avg_ys, #cachedPriceHistory.avg_xs)
@@ -978,7 +982,8 @@ local function renderHistoryUI()
         ImGui.PushStyleColor(ImGuiCol.Text, 255, 0, 255, 1)
         ImGui.TableSetupColumn('Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_HistoryPrice)
         ImGui.TableSetupColumn('Trader', ImGuiTableColumnFlags.None, 50.0, ColumnID_HistoryTrader)
-        ImGui.TableSetupColumn('Date', bit32.bor(ImGuiTableColumnFlags.DefaultSort, ImGuiTableColumnFlags.PreferSortDescending),
+        ImGui.TableSetupColumn('Date',
+            bit32.bor(ImGuiTableColumnFlags.DefaultSort, ImGuiTableColumnFlags.PreferSortDescending),
             50.0, ColumnID_HistoryDate)
         ImGui.PopStyleColor()
         ImGui.TableHeadersRow()
