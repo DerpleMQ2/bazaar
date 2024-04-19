@@ -730,6 +730,7 @@ local function renderTraderUI()
         settings.DontUndercut = newText
         SaveSettings()
     end
+    ImGui.BeginChild("BazaarItemsPanel")
 
     ImGui.Separator()
     ImGui.Text("Trader Items")
@@ -917,6 +918,7 @@ local function renderTraderUI()
         end
         ImGui.Unindent()
     end
+    ImGui.EndChild()
 end
 
 function math.average(t)
@@ -1116,6 +1118,7 @@ local function renderAuctionUI()
     ImGui.SetWindowFontScale(1.2)
     ImGui.PushStyleColor(ImGuiCol.Text, 255, 255, 0, 1)
     ImGui.Text("Count Down: %ds", (settings.scanTimer * 60) - (os.clock() - lastAuction))
+    ImGui.SetWindowFontScale(1)
     ImGui.PopStyleColor()
     if ImGui.Button("Auction Now!") then
         forceAuction = true
@@ -1123,9 +1126,24 @@ local function renderAuctionUI()
 
     ImGui.Separator()
 
+    ImGui.Text("Drag new Items")
+    if ImGui.Button("HERE", ICON_WIDTH, ICON_HEIGHT) then
+        addCursorItem()
+        --mq.cmd("/autoinv")
+    end
+    ImGui.Separator()
+
+
+    if ImGui.Button("Manually Add Auction Line") then
+        openPopup = true
+    end
+
+    ImGui.Separator()
+
+    ImGui.BeginChild("AuctionItemList")
+
     ImGui.PushStyleColor(ImGuiCol.Text, 0, 100, 255, 1)
     ImGui.Text("Auction Items")
-    ImGui.SetWindowFontScale(1)
 
     ImGui.BeginTable("Items", 4, bit32.bor(ImGuiTableFlags.Resizable, ImGuiTableFlags.Borders))
     ImGui.TableSetupColumn('Item', ImGuiTableColumnFlags.None, 250)
@@ -1190,21 +1208,7 @@ local function renderAuctionUI()
         end
     end
     ImGui.EndTable()
-    ImGui.Separator()
-
-    ImGui.Text("Drag new Items")
-    if ImGui.Button("HERE", ICON_WIDTH, ICON_HEIGHT) then
-        addCursorItem()
-        --mq.cmd("/autoinv")
-    end
-    ImGui.Separator()
-
-
-    if ImGui.Button("Manually Add Auction Line") then
-        openPopup = true
-    end
-
-    ImGui.Separator()
+    ImGui.EndChild()
 
     if openPopup and ImGui.IsPopupOpen(newAuctionPopup) == false then
         ImGui.OpenPopup(newAuctionPopup)
