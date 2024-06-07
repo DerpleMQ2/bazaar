@@ -472,9 +472,9 @@ local function searchBazaar(itemName)
     --items_db:exec("PRAGMA schema.wal_checkpoint;")
 end
 
-local cancelCheckPrices = false
+local cancelCheckPrices          = false
 
-local traderCheckPrices = function()
+local traderCheckPrices          = function()
     print("\ayChecking current prices...")
 
     for currentItem, _ in pairs(itemList) do
@@ -492,7 +492,7 @@ local traderCheckPrices = function()
     print "\agPrice Scan Complete!"
 end
 
-local traderCheckItems = function()
+local traderCheckItems           = function()
     if scanItem ~= nil then
         searchBazaar(scanItem)
         refreshItemSlot(itemList[scanItem]["slot"])
@@ -514,24 +514,47 @@ local traderCheckItems = function()
 
     doItemScan = false
 end
+local ColumnID_AuctionItemName   = 0
+local ColumnID_AuctionItemCost   = 1
+local ColumnID_AuctionItemActive = 2
+local ColumnID_AuctionItemUnused = 3
 
-local ColumnID_ItemIcon = 0
-local ColumnID_Item = 1
-local ColumnID_MyPrice = 2
-local ColumnID_LowestPrice = 3
-local ColumnID_BestTrader = 4
-local ColumnID_ListedDate = 5
-local ColumnID_TargetPrice = 6
-local ColumnID_LAST = ColumnID_TargetPrice + 1
+local ColumnID_ItemIcon          = 0
+local ColumnID_Item              = 1
+local ColumnID_MyPrice           = 2
+local ColumnID_LowestPrice       = 3
+local ColumnID_BestTrader        = 4
+local ColumnID_ListedDate        = 5
+local ColumnID_TargetPrice       = 6
+local ColumnID_LAST              = ColumnID_TargetPrice + 1
 
-local genericSort = function(k1, k2, dir)
+local genericSort                = function(k1, k2, dir)
     if dir == 1 then
         return k1 < k2
     end
     return k1 > k2
 end
 
-local itemSorter = function(k1, k2, spec)
+local auctionItemSorter          = function(k1, k2, spec, tbl)
+    local i1 = tbl[k1]
+    local i2 = tbl[k2]
+    if spec then
+        ---@type string, string
+        local a, b = i1.item or "", i2.item or ""
+        if spec.ColumnUserID == ColumnID_AuctionItemCost then
+            a = i1.cost or "0"
+            b = i2.cost or "0"
+        end
+
+        if a ~= b then return genericSort(a, b, spec.SortDirection) end
+
+        return genericSort(k1, k2, spec.SortDirection)
+    end
+
+    return genericSort(k1, k2, 1)
+end
+
+local itemSorter                 = function(k1, k2, spec)
     local i1 = itemList[k1]
     local i2 = itemList[k2]
     if spec then
@@ -566,16 +589,16 @@ local itemSorter = function(k1, k2, spec)
     return genericSort(k1, k2, 1)
 end
 
-local ColumnID_HistoryPrice = 0
-local ColumnID_HistoryTrader = 1
-local ColumnID_HistoryDate = 2
-local ColumnID_HistoryLAST = ColumnID_HistoryDate + 1
+local ColumnID_HistoryPrice      = 0
+local ColumnID_HistoryTrader     = 1
+local ColumnID_HistoryDate       = 2
+local ColumnID_HistoryLAST       = ColumnID_HistoryDate + 1
 
 ---@param k1 table<any>: object 1 to sort
 ---@param k2 table<any>: object 2 to sort
 ---@param spec table<any>: sorting spec
 ---@return boolean
-local historySorter = function(k1, k2, spec)
+local historySorter              = function(k1, k2, spec)
     if spec then
         local a
         local b
@@ -654,6 +677,8 @@ local function drawInspectableIcon(iconID, item)
 end
 
 local sortedItemKeys = {}
+local sortedAuctionItemKeys = {}
+local sortedDisabledAuctionItemKeys = {}
 
 local function renderTraderUI()
     local pressed
@@ -1062,8 +1087,8 @@ local RenderNewAuctionPopup = function()
     end
 end
 
-local forceAuction = false
-local doAuction = function(ignorePause)
+local forceAuction          = false
+local doAuction             = function(ignorePause)
     cacheItems()
 
     if not forceAuction then
@@ -1086,15 +1111,30 @@ local doAuction = function(ignorePause)
     lastAuction = os.clock()
 end
 
-local addCursorItem = function()
+local addCursorItem         = function()
     if mq.TLO.Cursor() ~= nil then
         popupAuctionItem = mq.TLO.Cursor() or ""
         openPopup = true
     end
 end
 
-local ICON_WIDTH = 50
-local ICON_HEIGHT = 50
+local ICON_WIDTH            = 50
+local ICON_HEIGHT           = 50
+
+local function handleSorting(sortSpec, inputTable)
+    local sortedKeys = {}
+
+    for k, _ in pairs(inputTable or {}) do
+        table.insert(sortedKeys, k)
+    end
+
+    if sortSpec.SpecsCount >= 1 then
+        local spec = sortSpec:Specs(1)
+        table.sort(sortedKeys, function(k1, k2) return auctionItemSorter(k1, k2, spec, inputTable) end)
+    end
+
+    return sortedKeys
+end
 
 local function renderAuctionUI()
     if not settings then return end
@@ -1145,15 +1185,33 @@ local function renderAuctionUI()
     ImGui.PushStyleColor(ImGuiCol.Text, 0, 100, 255, 1)
     ImGui.Text("Auction Items")
 
-    ImGui.BeginTable("Items", 4, bit32.bor(ImGuiTableFlags.Resizable, ImGuiTableFlags.Borders))
-    ImGui.TableSetupColumn('Item', ImGuiTableColumnFlags.None, 250)
-    ImGui.TableSetupColumn('Cost', ImGuiTableColumnFlags.None, 50.0)
-    ImGui.TableSetupColumn('Active', ImGuiTableColumnFlags.None, 50.0)
-    ImGui.TableSetupColumn('', ImGuiTableColumnFlags.None, 50.0)
+    ImGui.BeginTable("Items", 4, bit32.bor(ImGuiTableFlags.Resizable, ImGuiTableFlags.Borders, ImGuiTableFlags.Sortable))
+    ImGui.TableSetupColumn('Item', ImGuiTableColumnFlags.None, 250, ColumnID_AuctionItemName)
+    ImGui.TableSetupColumn('Cost', ImGuiTableColumnFlags.None, 50.0, ColumnID_AuctionItemCost)
+    ImGui.TableSetupColumn('Active', ImGuiTableColumnFlags.NoSort, 50.0, ColumnID_AuctionItemActive)
+    ImGui.TableSetupColumn('', ImGuiTableColumnFlags.NoSort, 50.0, ColumnID_AuctionItemUnused)
     ImGui.TableHeadersRow()
     ImGui.PopStyleColor()
+
+    local sortSpec = ImGui.TableGetSortSpecs()
+    local auctionItemCount = GetTableSize(settings.AuctionItems)
+    if sortSpec and (sortSpec.SpecsDirty or (#sortedAuctionItemKeys ~= auctionItemCount)) then
+        printf("Redoing Auction Item List... %d %d", #sortedAuctionItemKeys, auctionItemCount)
+        sortedAuctionItemKeys = handleSorting(sortSpec, settings.AuctionItems)
+    end
+    local disabledAuctionItemCount = GetTableSize(settings.DisabledAuctionItems)
+    if sortSpec and (sortSpec.SpecsDirty or (#sortedDisabledAuctionItemKeys ~= disabledAuctionItemCount)) then
+        printf("Redoing Disabled Auction Item List... %d %d", #sortedDisabledAuctionItemKeys, disabledAuctionItemCount)
+        sortedDisabledAuctionItemKeys = handleSorting(sortSpec, settings.DisabledAuctionItems)
+    end
+
+    if sortSpec then
+        sortSpec.SpecsDirty = false
+    end
+
     if (settings) then
-        for idx, v in pairs(settings.AuctionItems or {}) do
+        for _, key in ipairs(sortedAuctionItemKeys or {}) do
+            local v = settings.AuctionItems[key]
             ImGui.TableNextColumn()
             local _, clicked = ImGui.Selectable(v.item, false)
             if clicked then
@@ -1164,23 +1222,24 @@ local function renderAuctionUI()
             ImGui.TableNextColumn()
             ImGui.Text(v.cost)
             ImGui.TableNextColumn()
-            ImGui.PushID(idx .. "_togg_btn")
+            ImGui.PushID(key .. "_disab_togg_btn")
             if ImGui.SmallButton(ICONS.FA_TOGGLE_ON) then
-                table.insert(settings.DisabledAuctionItems, settings.AuctionItems[idx])
-                settings.AuctionItems[idx] = nil
+                table.insert(settings.DisabledAuctionItems, settings.AuctionItems[key])
+                settings.AuctionItems[key] = nil
                 SaveSettings(true)
                 cacheItems()
             end
             ImGui.PopID()
             ImGui.TableNextColumn()
-            ImGui.PushID(idx .. "_trash_btn")
+            ImGui.PushID(key .. "_trash_btn")
             if ImGui.SmallButton(ICONS.FA_TRASH) then
-                settings.AuctionItems[idx] = nil
+                settings.AuctionItems[key] = nil
                 SaveSettings(true)
             end
             ImGui.PopID()
         end
-        for idx, v in pairs(settings.DisabledAuctionItems or {}) do
+        for _, key in ipairs(sortedDisabledAuctionItemKeys or {}) do
+            local v = settings.DisabledAuctionItems[key]
             ImGui.TableNextColumn()
             local _, clicked = ImGui.Selectable(v.item, false)
             if clicked then
@@ -1191,17 +1250,17 @@ local function renderAuctionUI()
             ImGui.TableNextColumn()
             ImGui.Text(v.cost)
             ImGui.TableNextColumn()
-            ImGui.PushID(idx .. "_togg_btn")
+            ImGui.PushID(key .. "_enab_togg_btn")
             if ImGui.SmallButton(ICONS.FA_TOGGLE_OFF) then
-                table.insert(settings.AuctionItems, settings.DisabledAuctionItems[idx])
-                settings.DisabledAuctionItems[idx] = nil
+                table.insert(settings.AuctionItems, settings.DisabledAuctionItems[key])
+                settings.DisabledAuctionItems[key] = nil
                 SaveSettings(true)
             end
             ImGui.PopID()
             ImGui.TableNextColumn()
-            ImGui.PushID(idx .. "_trash_btn")
+            ImGui.PushID(key .. "_trash_btn")
             if ImGui.SmallButton(ICONS.FA_TRASH) then
-                settings.DisabledAuctionItems[idx] = nil
+                settings.DisabledAuctionItems[key] = nil
                 SaveSettings(true)
             end
             ImGui.PopID()
