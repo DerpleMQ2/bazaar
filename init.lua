@@ -421,19 +421,31 @@ local function recalcTargetPrices()
     end
 end
 
-local function searchBazaar(itemName)
-    bazaarSearchWindowControl("Open")
-    mq.cmd("/breset")
-    mq.cmd(string.format("/bzsrch \"%s\"", itemName))
+local function bazaarQuery(itemName)
+    mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemNameInput").SetText(itemName)
+    mq.delay(500, function() return mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemNameInput").Text() == itemName end)
+
+    mq.TLO.Window("BazaarSearchWnd").Child("BZR_QueryButton").LeftMouseUp()
+    mq.delay(500, function() return not mq.TLO.Window("BazaarSearchWnd").Child("BZR_QueryButton").Enabled() end)
+
     repeat
         mq.delay(1000)
         print("\awWaiting for bazaar cmd to finish...")
         ---@diagnostic disable-next-line: undefined-field
-    until (mq.TLO.Bazaar() == "TRUE")
+    until mq.TLO.Window("BazaarSearchWnd").Child("BZR_QueryButton").Enabled()
+end
+
+local function searchBazaar(itemName)
+    bazaarSearchWindowControl("Open")
+
+    mq.TLO.Window("BazaarSearchWnd").Child("BZR_Default").LeftMouseUp()
+    mq.delay(500, function() return not mq.TLO.Window("BazaarSearchWnd").Child("BZR_Default").Checked() end)
+
+    bazaarQuery(itemName)
 
     if not mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemList").List(1, 3) then
         print("\arSearch failed, trying 1 more time...")
-        mq.cmd("/bzquery")
+        bazaarQuery(itemName)
     end
 
     local startSearchTime = os.clock()
@@ -1347,10 +1359,10 @@ local BazaarGUI = function()
     end
 end
 
-if not mq.TLO.Plugin("MQ2Bzsrch").IsLoaded() then
-    printf("\arBazaar requires MQ2Bzsrch to be loaded!\n\aw\ayPlease load it using: \aw/plugin mq2bzsrch")
-    mq.exit()
-end
+--if not mq.TLO.Plugin("MQ2Bzsrch").IsLoaded() then
+--    printf("\arBazaar requires MQ2Bzsrch to be loaded!\n\aw\ayPlease load it using: \aw/plugin mq2bzsrch")
+--    mq.exit()
+--end
 LoadSettings()
 
 mq.imgui.init('bazaarGUI', BazaarGUI)
