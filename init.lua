@@ -1,5 +1,5 @@
 local mq         = require('mq')
-local PackageMan = require('mq/PackageMan')
+local PackageMan = require('mq.PackageMan')
 PackageMan.Require('lsqlite3')
 
 local ICONS    = require('mq.Icons')
@@ -8,6 +8,8 @@ local ImGui    = require('ImGui')
 local ImPlot   = require('ImPlot')
 
 require('baz_utils')
+
+math.randomseed(os.time())
 
 local animItems = mq.FindTextureAnimation("A_DragItem")
 
@@ -68,6 +70,7 @@ local shouldDrawHistoryGUI = false
 local bgOpacity = 1.0
 local doItemScan = false
 local currentItemIdx = 0
+local currentScanItem = nil
 
 local scanItem = nil
 local pauseScan = false
@@ -80,7 +83,7 @@ local totalItems = 0
 
 local settings = {}
 
-local config_pickle_path = mq.configDir .. '/bazaar/' .. ServerName .. '_ ' .. CharConfig .. '.lua '
+local config_pickle_path = mq.configDir .. '/bazaar/' .. ServerName .. '_' .. CharConfig .. '.lua'
 
 local newAuctionPopup = "new_auction_popup"
 local lastAuction = 0
@@ -96,6 +99,32 @@ local openPopup = false
 
 -- first scan should be about 2 seconds after startup.
 local lastFullScan = 0
+
+local BAZAAR_ACTION_PAUSE_MS = 1000
+local BAZAAR_MIN_ITEM_PAUSE_MS = 1500
+local BAZAAR_MAX_ITEM_PAUSE_MS = 6000
+local BAZAAR_BREATHER_EVERY = 5
+local BAZAAR_BREATHER_MS = 8000
+local lastBazaarQueryDuration = 0
+
+local function bazaarActionPause()
+    -- Keep Bazaar UI interactions from firing back-to-back too tightly.
+    mq.delay(BAZAAR_ACTION_PAUSE_MS)
+end
+
+local function bazaarItemPause(itemsScanned)
+    -- Pace the scan from Bazaar's actual response time instead of a rigid loop.
+    local responsePause = math.floor(lastBazaarQueryDuration * 500)
+    local pauseMs = BAZAAR_MIN_ITEM_PAUSE_MS + responsePause
+    pauseMs = math.min(BAZAAR_MAX_ITEM_PAUSE_MS, pauseMs)
+
+    if itemsScanned and itemsScanned > 0 and itemsScanned % BAZAAR_BREATHER_EVERY == 0 then
+        print("\ayTaking a short breather before the next batch...")
+        pauseMs = pauseMs + BAZAAR_BREATHER_MS
+    end
+
+    mq.delay(pauseMs)
+end
 
 local function clearCachedHistory()
     cachedPriceHistory.max_x = 0
@@ -114,7 +143,7 @@ local function cacheItems()
     local lineCount = 1
 
     if (settings and #AuctionText == 0) then
-        for _, v in pairs(settings.AuctionItems) do
+        for _, v in pairs(settings.AuctionItems or {}) do
             if line:len() > 0 then line = line .. " | " end
             ---@diagnostic disable-next-line: undefined-field
             line = line .. mq.TLO.LinkDB("=" .. v.item)() .. " " .. v.cost
@@ -146,11 +175,15 @@ end
 
 local DefaultConfig = {
     ['Timer']                = { Default = 5, Tooltip = "Time in minutes between manual auctions", },
-    ['Channels']             = { Default = "auc", Tooltip = "| Seperated list of channels to auction to. ex: auc|6|7", },
-    ['UnderCutPercent']      = { Default = 1, Tooltip = "Default undercut amount", },
+    ['Channels']             = { Default = "auc", Tooltip = "| Separated list of channels to auction to. ex: auc|6|7", },
+    ['UnderCutPercent']      = { Default = 1, Tooltip = "Minimum undercut percent", },
+    ['UnderCutPercentMax']   = { Default = 1, Tooltip = "Maximum undercut percent", },
     ['UnderCutOOM']          = { Default = 0, Tooltip = "Round Undercut to Order of Magnitude X", },
+    ['RaiseUnderpriced']     = { Default = false, Tooltip = "Raise prices that are far below the calculated target price.", },
+    ['RaiseUnderpricedPercent'] = { Default = 10, Tooltip = "Only raise prices when current price is this percent or more below target.", },
     ['DefaultPrice']         = { Default = 2000000, Tooltip = "Default price", },
-    ['DontUndercut']         = { Default = CharConfig .. "|", Tooltip = "| Seperated list of traders not to undercut. ex: Bob|Derple", },
+    ['DontUndercut']         = { Default = CharConfig .. "|", Tooltip = "| Separated list of traders not to undercut. ex: Bob|Derple", },
+    ['AutoUpdatePrices']     = { Default = true, Tooltip = "Automatically update trader prices to the calculated target price after scanning.", },
     ['AuctionItems']         = { Default = {}, },
     ['scanTimer']            = { Default = 30, },
     ['DisabledAuctionItems'] = { Default = {}, },
@@ -191,9 +224,9 @@ end
 -- Manage /trader window
 --------------------------------------------------------------**|
 local function traderWindowControl(status)
-    print("\aySetting Trader window to \ag", status)
     if status == "Open" or status == "On" or status == "Off" then
         if not mq.TLO.Window("BazaarWnd").Open() then
+            print("\ayOpening Trader window...")
             mq.cmd("/trader")
         end
 
@@ -293,7 +326,7 @@ local function refreshLocalSlots()
 
     for slot = 0, 144 do
         ---@diagnostic disable-next-line: undefined-field
-        if mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).Tooltip():len() == 0 then break end
+        if (mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).Tooltip() or ""):len() == 0 then break end
         mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).LeftMouseUp()
         ---@diagnostic disable-next-line: undefined-field
         while not mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).InvSlot.Selected() do
@@ -308,7 +341,7 @@ local function refreshLocalItems()
 
     for slot = 0, 144 do
         ---@diagnostic disable-next-line: undefined-field
-        if mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).Tooltip():len() == 0 then break end
+        if (mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).Tooltip() or ""):len() == 0 then break end
         mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).LeftMouseUp()
         ---@diagnostic disable-next-line: undefined-field
         while not mq.TLO.Window("BazaarWnd").Child(string.format("BZR_BazaarSlot%d", slot)).InvSlot.Selected() do
@@ -372,6 +405,28 @@ local function asyncSetTraderPrice()
     end
 end
 
+local function waitForTraderPriceUpdate(itemName)
+    local startTime = os.clock()
+    local timeoutSeconds = 20
+
+    while setItem ~= nil do
+        asyncSetTraderPrice()
+        mq.doevents()
+        mq.delay(50)
+
+        if os.clock() - startTime > timeoutSeconds then
+            print(string.format("\arTimed out while updating trader price for \am%s", itemName))
+            setItem = nil
+            setPrice = 2000000
+            asyncSetTraderPriceState = 0
+            asyncSetTraderPriceTiming = 0
+            return false
+        end
+    end
+
+    return true
+end
+
 -------------------------------------------------------------|
 -- Checks your /trader prices and updates if needed.
 -----------------------------------------------------------**|
@@ -394,20 +449,39 @@ local function calcTargetPrice(best, curr, trader)
     if curr == 0 and (best or 0) == 0 then
         return settings.DefaultPrice
     end
+
+    if not shouldUndercut(trader) then
+        return best
+    end
+
+    local ordMagDiff = 10 ^ settings.UnderCutOOM
+    -- math.floor(math.abs(math.log((best > 0 and best or 1) / (settings.UnderCutOOM > 0 and 10 ^ settings.UnderCutOOM or 10), 10)))
+
+    local minPercent = tonumber(settings.UnderCutPercent) or 0
+    local maxPercent = tonumber(settings.UnderCutPercentMax) or minPercent
+    if maxPercent < minPercent then
+        minPercent, maxPercent = maxPercent, minPercent
+    end
+    local undercutPercent = minPercent
+    if maxPercent > minPercent then
+        undercutPercent = math.random(minPercent, maxPercent)
+    end
+
+    local newPrice = math.ceil((best or 0) - (undercutPercent / 100 * (best or 0)))
+
+    if ordMagDiff <= best then
+        newPrice = math.floor(newPrice / ordMagDiff) * ordMagDiff
+    end
+
     if curr == 0 or curr >= (best or 0) then
-        if shouldUndercut(trader) then
-            local ordMagDiff = 10 ^ settings.UnderCutOOM
-            -- math.floor(math.abs(math.log((best > 0 and best or 1) / (settings.UnderCutOOM > 0 and 10 ^ settings.UnderCutOOM or 10), 10)))
+        return newPrice
+    end
 
-            local newPrice = math.ceil((best or 0) - (settings.UnderCutPercent / 100 * (best or 0)))
-
-            if ordMagDiff > best then return newPrice end
-
-            newPrice = math.floor(newPrice / ordMagDiff) * ordMagDiff
-
+    if settings.RaiseUnderpriced then
+        local raiseThresholdPercent = tonumber(settings.RaiseUnderpricedPercent) or 0
+        local raiseBelow = newPrice - ((raiseThresholdPercent / 100) * newPrice)
+        if curr <= raiseBelow then
             return newPrice
-        else
-            return best
         end
     end
 
@@ -416,36 +490,91 @@ end
 
 local function recalcTargetPrices()
     for _, itemData in pairs(itemList) do
-        itemData["TargetPrice"] = calcTargetPrice((tonumber(itemData["LowestPrice"]) or 0),
-            (tonumber(itemData["CurrentPrice"]) or -1), (itemData["Trader"] or "Unknown"))
+        itemData["TargetPrice"] = calcTargetPrice((tonumber(itemData["CompetitivePrice"]) or 0),
+            (tonumber(itemData["CurrentPrice"]) or -1), (itemData["CompetitiveTrader"] or "Unknown"))
     end
 end
 
 local function bazaarQuery(itemName)
+    if not mq.TLO.Window("BazaarSearchWnd").Open() then
+        bazaarSearchWindowControl("Open")
+        mq.delay(1000, function() return mq.TLO.Window("BazaarSearchWnd").Open() end)
+    end
+
     mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemNameInput").SetText(itemName)
     mq.delay(500, function() return mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemNameInput").Text() == itemName end)
+    bazaarActionPause()
+
+    if not mq.TLO.Window("BazaarSearchWnd").Child("BZR_QueryButton").Enabled() then
+        print("\ayBazaar is still busy, skipping this search for now.")
+        return false
+    end
 
     mq.TLO.Window("BazaarSearchWnd").Child("BZR_QueryButton").LeftMouseUp()
     mq.delay(500, function() return not mq.TLO.Window("BazaarSearchWnd").Child("BZR_QueryButton").Enabled() end)
 
+    local waitStart = os.clock()
+    local lastStatus = waitStart
+    local timeoutSeconds = 45
     repeat
-        mq.delay(1000)
-        print("\awWaiting for bazaar cmd to finish...")
+        mq.delay(250)
+        if os.clock() - waitStart > timeoutSeconds then
+            print(string.format("\arBazaar query timed out after %d seconds: \am%s", timeoutSeconds, itemName))
+            lastBazaarQueryDuration = timeoutSeconds
+            return false
+        end
+        if os.clock() - lastStatus > 15 then
+            print("\ayStill waiting on Bazaar results...")
+            lastStatus = os.clock()
+        end
         ---@diagnostic disable-next-line: undefined-field
     until mq.TLO.Window("BazaarSearchWnd").Child("BZR_QueryButton").Enabled()
+
+    lastBazaarQueryDuration = os.clock() - waitStart
+    return true
+end
+
+local function autoUpdateTraderPrice(itemName)
+    if not settings.AutoUpdatePrices then return end
+
+    local itemData = itemList[itemName]
+    if not itemData then return end
+
+    local currentPrice = tonumber(itemData["CurrentPrice"]) or 0
+    local targetPrice = tonumber(itemData["TargetPrice"]) or 0
+
+    if targetPrice <= 0 then return end
+    if currentPrice == targetPrice then return end
+
+    print(string.format("\ayAuto-updating \am%s\ay from \aw%d\ay to \ag%d", itemName, currentPrice, targetPrice))
+    setTraderPrice(itemName, targetPrice)
+    if waitForTraderPriceUpdate(itemName) then
+        itemData["CurrentPrice"] = targetPrice
+    end
 end
 
 local function searchBazaar(itemName)
+    itemList[itemName] = itemList[itemName] or {}
+    itemList[itemName]["LowestPrice"] = nil
+    itemList[itemName]["Trader"] = nil
+    itemList[itemName]["NextLowestPrice"] = nil
+    itemList[itemName]["NextTrader"] = nil
+    itemList[itemName]["CompetitivePrice"] = nil
+    itemList[itemName]["CompetitiveTrader"] = nil
+    itemList[itemName]["TargetPrice"] = nil
+
     bazaarSearchWindowControl("Open")
 
     mq.TLO.Window("BazaarSearchWnd").Child("BZR_Default").LeftMouseUp()
     mq.delay(500, function() return not mq.TLO.Window("BazaarSearchWnd").Child("BZR_Default").Checked() end)
+    bazaarActionPause()
 
-    bazaarQuery(itemName)
+    if not bazaarQuery(itemName) then return end
 
     if not mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemList").List(1, 3) then
         print("\arSearch failed, trying 1 more time...")
-        bazaarQuery(itemName)
+        bazaarActionPause()
+        if not bazaarQuery(itemName) then return end
     end
 
     local startSearchTime = os.clock()
@@ -455,8 +584,8 @@ local function searchBazaar(itemName)
         found = mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemList").List(1, 3)()
     end
 
-    itemList[itemName] = itemList[itemName] or {}
-    itemList[itemName]["LowestPrice"] = nil
+    local allSellers = {}
+    local eligibleSellers = {}
 
     for searchResult = 1, 255 do
         local count = mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemList").List(searchResult, 3)()
@@ -466,20 +595,62 @@ local function searchBazaar(itemName)
                 local workingValue = NoComma(mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemList").List(searchResult, 4)())
                 local trader = mq.TLO.Window("BazaarSearchWnd").Child("BZR_ItemList").List(searchResult, 8)()
                 workingValue = tonumber(workingValue)
-                print(string.format("Found seller: \am%s \axwith price: \ag%d", trader, workingValue))
 
-                itemDB:cacheItemPrice(itemList[itemName]["DBID"], trader, workingValue)
+                if workingValue and trader then
+                    print(string.format("Found seller: \am%s \axwith price: \ag%d", trader, workingValue))
 
-                local LowestPrice = tonumber(itemList[itemName]["LowestPrice"]) or 2000000
+                    itemDB:cacheItemPrice(itemList[itemName]["DBID"], trader, workingValue)
+                    table.insert(allSellers, { price = workingValue, trader = trader })
 
-                if workingValue <= LowestPrice then
-                    itemList[itemName]["LowestPrice"] = workingValue
-                    itemList[itemName]["Trader"] = trader
-                    itemList[itemName]["TargetPrice"] = calcTargetPrice((tonumber(workingValue) or 0),
-                        (tonumber(itemList[itemName]["CurrentPrice"]) or -1), trader)
+                    if shouldUndercut(trader) then
+                        table.insert(eligibleSellers, { price = workingValue, trader = trader })
+                    end
                 end
             end
         end
+    end
+
+    table.sort(allSellers, function(a, b)
+        if a.price == b.price then
+            return tostring(a.trader) < tostring(b.trader)
+        end
+        return a.price < b.price
+    end)
+
+    table.sort(eligibleSellers, function(a, b)
+        if a.price == b.price then
+            return tostring(a.trader) < tostring(b.trader)
+        end
+        return a.price < b.price
+    end)
+
+    local lowestSeller = allSellers[1]
+    local nextLowestSeller = nil
+    if lowestSeller then
+        for _, seller in ipairs(allSellers) do
+            if seller.trader ~= lowestSeller.trader then
+                nextLowestSeller = seller
+                break
+            end
+        end
+    end
+
+    if lowestSeller then
+        itemList[itemName]["LowestPrice"] = lowestSeller.price
+        itemList[itemName]["Trader"] = lowestSeller.trader
+    end
+
+    if nextLowestSeller then
+        itemList[itemName]["NextLowestPrice"] = nextLowestSeller.price
+        itemList[itemName]["NextTrader"] = nextLowestSeller.trader
+    end
+
+    local bestSeller = eligibleSellers[1]
+    if bestSeller then
+        itemList[itemName]["CompetitivePrice"] = bestSeller.price
+        itemList[itemName]["CompetitiveTrader"] = bestSeller.trader
+        itemList[itemName]["TargetPrice"] = calcTargetPrice((tonumber(bestSeller.price) or 0),
+            (tonumber(itemList[itemName]["CurrentPrice"]) or -1), bestSeller.trader)
     end
     --items_db:exec("PRAGMA schema.wal_checkpoint;")
 end
@@ -491,16 +662,21 @@ local traderCheckPrices          = function()
 
     for currentItem, _ in pairs(itemList) do
         currentItemIdx = currentItemIdx + 1
+        currentScanItem = currentItem
         print(string.format(" - \ag%d\ax/\ag%d\ax item = \am%s", currentItemIdx, totalItems, currentItem))
         searchBazaar(currentItem)
+        autoUpdateTraderPrice(currentItem)
+        bazaarItemPause(currentItemIdx)
 
         if cancelCheckPrices then
             cancelCheckPrices = false
+            currentScanItem = nil
             print("\arPrice Scan Canceled!")
             return
         end
     end
 
+    currentScanItem = nil
     print "\agPrice Scan Complete!"
 end
 
@@ -525,6 +701,7 @@ local traderCheckItems           = function()
     print "\agItem Scan Complete!"
 
     doItemScan = false
+    currentScanItem = nil
 end
 local ColumnID_AuctionItemName   = 0
 local ColumnID_AuctionItemCost   = 1
@@ -536,8 +713,10 @@ local ColumnID_Item              = 1
 local ColumnID_MyPrice           = 2
 local ColumnID_LowestPrice       = 3
 local ColumnID_BestTrader        = 4
-local ColumnID_ListedDate        = 5
-local ColumnID_TargetPrice       = 6
+local ColumnID_NextLowestPrice   = 5
+local ColumnID_NextTrader        = 6
+local ColumnID_ListedDate        = 7
+local ColumnID_TargetPrice       = 8
 local ColumnID_LAST              = ColumnID_TargetPrice + 1
 
 local genericSort                = function(k1, k2, dir)
@@ -580,17 +759,25 @@ local itemSorter                 = function(k1, k2, spec)
             a = tonumber(i1["LowestPrice"] or 2000000)
             b = tonumber(i2["LowestPrice"] or 2000000)
         end
+        if spec.ColumnUserID == ColumnID_NextLowestPrice then
+            a = tonumber(i1["NextLowestPrice"] or 2000000)
+            b = tonumber(i2["NextLowestPrice"] or 2000000)
+        end
         if spec.ColumnUserID == ColumnID_TargetPrice then
             a = tonumber(i1["TargetPrice"] or 0)
             b = tonumber(i2["TargetPrice"] or 0)
         end
-        if spec.ColumnUserID == ColumnID_TargetPrice then
+        if spec.ColumnUserID == ColumnID_ListedDate then
             a = tonumber(i1["ListedDate"] or 0)
             b = tonumber(i2["ListedDate"] or 0)
         end
         if spec.ColumnUserID == ColumnID_BestTrader then
             a = (i1["Trader"] or "zUnknown")
             b = (i2["Trader"] or "zUnknown")
+        end
+        if spec.ColumnUserID == ColumnID_NextTrader then
+            a = (i1["NextTrader"] or "zUnknown")
+            b = (i2["NextTrader"] or "zUnknown")
         end
 
         if a ~= b then return genericSort(a, b, spec.SortDirection) end
@@ -691,6 +878,8 @@ end
 local sortedItemKeys = {}
 local sortedAuctionItemKeys = {}
 local sortedDisabledAuctionItemKeys = {}
+local editingTargetItem = nil
+local showAdvancedPricing = false
 
 local function renderTraderUI()
     local pressed
@@ -699,10 +888,13 @@ local function renderTraderUI()
     ImGui.Text("Bazaar running for %s", CharConfig)
     ImGui.PopStyleColor(1)
 
+    local used
+
+    ImGui.Text("Trader Controls")
     if ImGui.Button("Open Trader", 150, 25) then
         traderWindowControl("Open")
     end
-
+    ImGui.SameLine()
     if mq.TLO.Me.Trader() then
         ImGui.PushStyleColor(ImGuiCol.Button, 0.6, 0.3, 0.3, 1.0)
         if ImGui.Button("Turn Off Trader", 150, 25) then
@@ -716,64 +908,151 @@ local function renderTraderUI()
     end
     ImGui.PopStyleColor(1)
 
-    settings.scanTimer, pressed = ImGui.InputInt("Scan Time in Minues", settings.scanTimer)
+    ImGui.Separator()
+    ImGui.Text("Scan Controls")
+
+    ImGui.Text("Scan every")
+    ImGui.SameLine()
+    ImGui.PushItemWidth(80)
+    settings.scanTimer, pressed = ImGui.InputInt("##scan_minutes", settings.scanTimer)
     if pressed then
         if settings.scanTimer < 30 then settings.scanTimer = 30 end
         SaveSettings(false)
     end
+    ImGui.PopItemWidth()
+    ImGui.SameLine()
+    ImGui.Text("minutes")
 
-    if ImGui.Button("Scan Items", 150, 25) then
+    if ImGui.Button("Check Bazaar Prices", 170, 25) then
         doItemScan = true
         currentItemIdx = 0
+        currentScanItem = nil
         lastFullScan = os.time()
     end
-
     ImGui.SameLine()
-
     ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.6, 0.6, 1.0)
-    ImGui.Text(string.format("Next Scan in %s", FormatTime((60 * settings.scanTimer) - (os.time() - lastFullScan))))
+    ImGui.Text(string.format("Next scan: %s", FormatTime((60 * settings.scanTimer) - (os.time() - lastFullScan))))
+    ImGui.PopStyleColor(1)
+    ImGui.SameLine()
+    pauseScan, _ = ImGui.Checkbox("Pause timer", pauseScan)
+    ImGui.SameLine()
+    settings.AutoUpdatePrices, pressed = ImGui.Checkbox("Update prices after scan", settings.AutoUpdatePrices)
+    if pressed then
+        SaveSettings()
+    end
+    Tooltip("When enabled, Scan Items will update your trader prices to the calculated Target Price.")
+    ImGui.Text("")
+
+    ImGui.Text("Pricing Rules")
+
+    ImGui.Text("Undercut range")
+    ImGui.SameLine()
+    ImGui.PushItemWidth(70)
+    settings.UnderCutPercent, used = ImGui.InputInt("##min_undercut_percent", settings.UnderCutPercent)
+    if used then
+        if settings.UnderCutPercent < 0 then settings.UnderCutPercent = 0 end
+        if settings.UnderCutPercent > 90 then settings.UnderCutPercent = 90 end
+        if settings.UnderCutPercentMax < settings.UnderCutPercent then
+            settings.UnderCutPercentMax = settings.UnderCutPercent
+        end
+        recalcTargetPrices()
+        SaveSettings()
+    end
+    ImGui.SameLine()
+    ImGui.Text("% to")
+    ImGui.SameLine()
+    settings.UnderCutPercentMax, used = ImGui.InputInt("##max_undercut_percent", settings.UnderCutPercentMax)
+    if used then
+        if settings.UnderCutPercentMax < 0 then settings.UnderCutPercentMax = 0 end
+        if settings.UnderCutPercentMax > 90 then settings.UnderCutPercentMax = 90 end
+        if settings.UnderCutPercent > settings.UnderCutPercentMax then
+            settings.UnderCutPercent = settings.UnderCutPercentMax
+        end
+        recalcTargetPrices()
+        SaveSettings()
+    end
+    ImGui.PopItemWidth()
+    ImGui.SameLine()
+    ImGui.Text("% below lowest eligible seller")
+
+    ImGui.PushStyleColor(ImGuiCol.Text, 0.9, 0.85, 0.45, 1.0)
+    if settings.AutoUpdatePrices then
+        ImGui.Text("Auto-update is ON: prices may change during scans.")
+    else
+        ImGui.Text("Auto-update is OFF: scans only calculate target prices.")
+    end
     ImGui.PopStyleColor(1)
 
+    settings.RaiseUnderpriced, used = ImGui.Checkbox("Raise prices that are way under target", settings.RaiseUnderpriced)
+    if used then
+        SaveSettings()
+    end
+    if settings.RaiseUnderpriced then
+        ImGui.SameLine()
+        ImGui.Text("if under by")
+        ImGui.SameLine()
+        ImGui.PushItemWidth(95)
+        settings.RaiseUnderpricedPercent, used = ImGui.InputInt("##raise_underpriced_percent", settings.RaiseUnderpricedPercent)
+        if used then
+            if settings.RaiseUnderpricedPercent < 0 then settings.RaiseUnderpricedPercent = 0 end
+            if settings.RaiseUnderpricedPercent > 90 then settings.RaiseUnderpricedPercent = 90 end
+            recalcTargetPrices()
+            SaveSettings()
+        end
+        ImGui.PopItemWidth()
+        ImGui.SameLine()
+        ImGui.Text("% or more")
+    end
+
+    ImGui.Text("Default price")
     ImGui.SameLine()
-
-    pauseScan, _ = ImGui.Checkbox("Pause Scan Timer", pauseScan)
-
-    ImGui.Separator()
-    ImGui.Text("Trader Settings")
-    local used
-    settings.UnderCutPercent, used = ImGui.SliderInt("Undercut by Percent", settings.UnderCutPercent, 0, 90)
-    if used then
-        recalcTargetPrices()
-        SaveSettings()
-    end
-
-    settings.UnderCutOOM, used = ImGui.SliderInt("Undercut Rounding to Nearst", settings.UnderCutOOM, 0, 90)
-    if used then
-        recalcTargetPrices()
-        SaveSettings()
-    end
-
-    local newText, _ = ImGui.InputText("Default Price", tostring(settings.DefaultPrice),
+    ImGui.PushItemWidth(180)
+    local newText, _ = ImGui.InputText("##default_price", tostring(settings.DefaultPrice),
         ImGuiInputTextFlags.CharsDecimal)
     ---@diagnostic disable-next-line: undefined-field
     if newText:len() > 0 and newText ~= tostring(settings.DefaultPrice) then
         settings.DefaultPrice = math.ceil(tonumber(newText) or 0)
         SaveSettings()
     end
+    ImGui.PopItemWidth()
 
-    newText, _ = ImGui.InputText("Don't Undercut", settings.DontUndercut, ImGuiInputTextFlags.None)
+    ImGui.Text("Don't undercut")
+    ImGui.SameLine()
+    ImGui.PushItemWidth(300)
+    newText, _ = ImGui.InputText("##dont_undercut", settings.DontUndercut, ImGuiInputTextFlags.None)
     ---@diagnostic disable-next-line: undefined-field
     if newText:len() > 0 and newText ~= settings.DontUndercut then
         settings.DontUndercut = newText
         SaveSettings()
     end
+    ImGui.PopItemWidth()
+
+    showAdvancedPricing, _ = ImGui.Checkbox("Advanced", showAdvancedPricing)
+    if showAdvancedPricing then
+        ImGui.Indent()
+        ImGui.Text("Round target prices to nearest")
+        ImGui.SameLine()
+        ImGui.PushItemWidth(180)
+        settings.UnderCutOOM, used = ImGui.InputInt("##undercut_rounding", settings.UnderCutOOM)
+        if used then
+            if settings.UnderCutOOM < 0 then settings.UnderCutOOM = 0 end
+            if settings.UnderCutOOM > 90 then settings.UnderCutOOM = 90 end
+            recalcTargetPrices()
+            SaveSettings()
+        end
+        ImGui.PopItemWidth()
+        Tooltip("Optional rounding for target prices. Leave at 0 if you are unsure.")
+        ImGui.Unindent()
+    end
+    ImGui.Text("")
+
     ImGui.BeginChild("BazaarItemsPanel")
 
     ImGui.Separator()
     ImGui.Text("Trader Items")
     if doItemScan then
         if not cancelCheckPrices then
-            ImGui.Text("Scanning Progress:")
+            ImGui.Text(string.format("Scanning %d / %d", math.max(0, currentItemIdx), math.max(totalItems or 0, 0)))
         else
             ImGui.Text("Canceling Scan...")
         end
@@ -786,7 +1065,21 @@ local function renderTraderUI()
         end
         ImGui.PopStyleColor(3)
         ImGui.SameLine()
-        ImGui.ProgressBar((currentItemIdx - 1) / (totalItems or 1))
+        local progressFraction = math.max(0, currentItemIdx) / math.max(totalItems or 1, 1)
+        local progressOverlay = string.format("%3d%%", math.floor((progressFraction * 100) + 0.5))
+        local progressBarWidth = ImGui.GetContentRegionAvail()
+        local progressBarHeight = 24
+        local progressTextWidth, progressTextHeight = ImGui.CalcTextSize(progressOverlay)
+        local progressBarX, progressBarY = ImGui.GetCursorScreenPos()
+        ImGui.ProgressBar(progressFraction, progressBarWidth, progressBarHeight, "")
+        ImGui.GetWindowDrawList():AddText(
+            ImVec2(
+                progressBarX + ((progressBarWidth - progressTextWidth) * 0.5),
+                progressBarY + ((progressBarHeight - progressTextHeight) * 0.5)
+            ),
+            ImGui.GetColorU32(1, 1, 1, 1),
+            progressOverlay
+        )
     end
 
     if ImGui.BeginTable("ItemList", ColumnID_LAST, bit32.bor(ImGuiTableFlags.Resizable, ImGuiTableFlags.Borders, ImGuiTableFlags.Sortable)) then
@@ -799,7 +1092,9 @@ local function renderTraderUI()
             300.0, ColumnID_Item)
         ImGui.TableSetupColumn('My Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_MyPrice)
         ImGui.TableSetupColumn('Lowest Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_LowestPrice)
-        ImGui.TableSetupColumn('Trader', ImGuiTableColumnFlags.None, 50.0, ColumnID_BestTrader)
+        ImGui.TableSetupColumn('Lowest Trader', ImGuiTableColumnFlags.None, 50.0, ColumnID_BestTrader)
+        ImGui.TableSetupColumn('Next Lowest Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_NextLowestPrice)
+        ImGui.TableSetupColumn('Next Lowest Trader', ImGuiTableColumnFlags.None, 50.0, ColumnID_NextTrader)
         ImGui.TableSetupColumn('Listed Date', ImGuiTableColumnFlags.None, 50.0, ColumnID_ListedDate)
         ImGui.TableSetupColumn('Target Price', ImGuiTableColumnFlags.None, 50.0, ColumnID_TargetPrice)
         ImGui.PopStyleColor()
@@ -820,10 +1115,9 @@ local function renderTraderUI()
                 table.sort(sortedItemKeys, function(k1, k2) return itemSorter(k1, k2, spec) end)
             end
         end
-        ImGui.TableNextRow()
-
         for _, currentItem in ipairs(sortedItemKeys) do
             local itemData = itemList[currentItem]
+            ImGui.TableNextRow()
 
             ImGui.TableNextColumn()
 
@@ -859,7 +1153,7 @@ local function renderTraderUI()
             ImGui.Text(FormatInt(itemData["CurrentPrice"] or 0))
             ImGui.PopStyleColor()
             ImGui.TableNextColumn()
-            ImGui.Text(FormatInt(itemData["LowestPrice"]) or "Unknown")
+            ImGui.Text(itemData["LowestPrice"] and FormatInt(itemData["LowestPrice"]) or "Unknown")
             ImGui.PopStyleColor()
             ImGui.TableNextColumn()
             if not itemData["Trader"] then
@@ -874,6 +1168,22 @@ local function renderTraderUI()
             ImGui.Text(itemData["Trader"] or "Unknown")
             ImGui.PopStyleColor()
             ImGui.TableNextColumn()
+            if not itemData["NextLowestPrice"] then
+                ImGui.PushStyleColor(ImGuiCol.Text, 80, 80, 80, 0.25)
+            else
+                ImGui.PushStyleColor(ImGuiCol.Text, 180, 220, 255, 1)
+            end
+            ImGui.Text(itemData["NextLowestPrice"] and FormatInt(itemData["NextLowestPrice"]) or "Unknown")
+            ImGui.PopStyleColor()
+            ImGui.TableNextColumn()
+            if not itemData["NextTrader"] then
+                ImGui.PushStyleColor(ImGuiCol.Text, 80, 80, 80, 0.25)
+            else
+                ImGui.PushStyleColor(ImGuiCol.Text, 180, 220, 255, 1)
+            end
+            ImGui.Text(itemData["NextTrader"] or "Unknown")
+            ImGui.PopStyleColor()
+            ImGui.TableNextColumn()
             ImGui.Text(GetDateString(itemData["ListedDate"] or 0))
             ImGui.SameLine()
             ImGui.PushID(currentItem .. "_set_list_btn")
@@ -885,22 +1195,41 @@ local function renderTraderUI()
             Tooltip("Set List Date")
             ImGui.TableNextColumn()
             ImGui.PushStyleColor(ImGuiCol.Text, 100, 100, 255, 1)
-            ImGui.PushID(currentItem .. "_text")
             local targetText = tostring(itemData["TargetPrice"] or settings.DefaultPrice)
-            local newText, _ = ImGui.InputText("##targetinputtext##edit", targetText, ImGuiInputTextFlags.CharsDecimal)
-            ---@diagnostic disable-next-line: undefined-field
-            if newText:len() > 0 and newText ~= tostring(itemData["TargetPrice"]) then
-                itemData["TargetPrice"] = math.ceil(tonumber(newText) or 0)
+            if editingTargetItem == currentItem then
+                ImGui.PushItemWidth(90)
+                ImGui.PushID(currentItem .. "_text")
+                local newText, _ = ImGui.InputText("##targetinputtext##edit", targetText, ImGuiInputTextFlags.CharsDecimal)
+                ---@diagnostic disable-next-line: undefined-field
+                if newText:len() > 0 and newText ~= tostring(itemData["TargetPrice"]) then
+                    itemData["TargetPrice"] = math.ceil(tonumber(newText) or 0)
+                end
+                ImGui.PopID()
+                ImGui.PopItemWidth()
+                ImGui.SameLine()
+                ImGui.PushID(currentItem .. "_done_edit_btn")
+                if ImGui.SmallButton("Done") then
+                    editingTargetItem = nil
+                end
+                ImGui.PopID()
+            else
+                ImGui.Text(FormatInt(itemData["TargetPrice"] or settings.DefaultPrice))
+                ImGui.SameLine()
+                ImGui.PushID(currentItem .. "_edit_target_btn")
+                if ImGui.SmallButton("Edit") then
+                    editingTargetItem = currentItem
+                end
+                ImGui.PopID()
             end
-            ImGui.PopID()
             ImGui.SameLine()
             ImGui.PushID(currentItem .. "_set_btn")
             if not setItem then
                 if ImGui.SmallButton(string.format('%s', ICONS.FA_CHECK_CIRCLE)) then
+                    local oldPrice = itemData["CurrentPrice"]
                     setTraderPrice(currentItem, itemData["TargetPrice"])
                     itemData["CurrentPrice"] = itemData["TargetPrice"]
-                    itemData["TargetPrice"] = calcTargetPrice((itemData["LowestPrice"] or 2000000),
-                        (itemData["CurrentPrice"] or -1), (itemData["Trader"] or "Unknown"))
+                    itemData["TargetPrice"] = calcTargetPrice((itemData["CompetitivePrice"] or 2000000),
+                        (oldPrice or -1), (itemData["CompetitiveTrader"] or "Unknown"))
                 end
             else
                 DisabledButton(string.format('%s', ICONS.FA_CHECK_CIRCLE)) -- noop
@@ -1039,7 +1368,7 @@ local function renderHistoryUI()
 
         for _, itemData in ipairs(historicalSales) do
             ImGui.TableNextColumn()
-            ImGui.Text(FormatInt(itemData["Price"]) or "Unknown")
+            ImGui.Text(itemData["Price"] and FormatInt(itemData["Price"]) or "Unknown")
             ImGui.TableNextColumn()
             if shouldUndercut(itemData["Trader"] or "Unknown") then
                 ImGui.PushStyleColor(ImGuiCol.Text, 0, 255, 255, 1)
@@ -1109,7 +1438,7 @@ local doAuction             = function(ignorePause)
         end
     end
 
-    local tokens = Tokenize(settings.Channel, "|")
+    local tokens = Tokenize(settings.Channels, "|")
 
     for _, v in ipairs(AuctionText) do
         for _, c in ipairs(tokens) do
@@ -1153,23 +1482,23 @@ local function renderAuctionUI()
     local used
 
     ImGui.Text("Auction Settings")
-    settings.scanTimer, used = ImGui.SliderInt("Auction Timer", settings.scanTimer, 1, 30,
+    settings.Timer, used = ImGui.SliderInt("Auction Timer", settings.Timer, 1, 30,
         "%d")
     if used then
         SaveSettings(false)
     end
-    local newText, _ = ImGui.InputText("Auction Channel", settings.Channel,
+    local newText, _ = ImGui.InputText("Auction Channel", settings.Channels,
         ImGuiInputTextFlags.None)
     ---@diagnostic disable-next-line: undefined-field
-    if newText:len() > 0 and newText ~= settings.Channel then
-        settings.Channel = newText
+    if newText:len() > 0 and newText ~= settings.Channels then
+        settings.Channels = newText
         SaveSettings(false)
     end
     ImGui.Separator()
     pauseAuctioning, _ = ImGui.Checkbox("Pause Auction", pauseAuctioning)
     ImGui.SetWindowFontScale(1.2)
     ImGui.PushStyleColor(ImGuiCol.Text, 255, 255, 0, 1)
-    ImGui.Text("Count Down: %ds", (settings.scanTimer * 60) - (os.clock() - lastAuction))
+    ImGui.Text("Count Down: %ds", (settings.Timer * 60) - (os.clock() - lastAuction))
     ImGui.SetWindowFontScale(1)
     ImGui.PopStyleColor()
     if ImGui.Button("Auction Now!") then
@@ -1300,7 +1629,7 @@ local function asyncAuctionUpdate()
         lastAuction = os.clock()
     end
 
-    if not pauseAuctioning and GetTableSize(settings or {}) == 0 then
+    if not pauseAuctioning and GetTableSize(settings.AuctionItems or {}) == 0 then
         pauseAuctioning = true
     end
 
@@ -1308,7 +1637,7 @@ local function asyncAuctionUpdate()
         lastAuction = os.clock()
     end
 
-    if forceAuction or os.clock() - lastAuction >= settings.scanTimer * 60 then
+    if forceAuction or os.clock() - lastAuction >= settings.Timer * 60 then
         print("Auctioning items")
         doAuction(false)
     end

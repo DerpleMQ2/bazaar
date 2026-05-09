@@ -43,5 +43,5 @@ function GetDayString(epoch)
 end
 
 function GetDayTable(epoch)
-    return { year = os.date('%Y', epoch), month = os.date('%m', epoch), day = os.date('%d', epoch), }
+    return { year = tonumber(os.date('%Y', epoch)), month = tonumber(os.date('%m', epoch)), day = tonumber(os.date('%d', epoch)), }
 end
